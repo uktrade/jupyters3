@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import mimetypes
+import threading
 import time
 import urllib
 import xml.etree.ElementTree as ET
@@ -419,8 +420,6 @@ def _list_keys(context, key_prefix, delimeter, omit):
 
 
 def _make_s3_request(context, method, path, query, non_auth_headers, payload):
-    print('request', method, path, query)
-
     service = 's3'
 
     auth_headers = _aws_auth_headers(service, context.aws_endpoint, method, path, query, non_auth_headers, payload)
@@ -429,7 +428,6 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
         **auth_headers,
     }
 
-    client = HTTPClient()
     url = f'https://{context.aws_endpoint["host"]}{path}'
     querystring = '&'.join([
         urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(value, safe='~')
@@ -438,8 +436,31 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     encoded_path = urllib.parse.quote(path, safe='/~')
     url = f'https://{context.aws_endpoint["host"]}{encoded_path}' + (('?' + querystring) if querystring else '')
 
-    request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
-    response = client.fetch(request)
+    # Because of...
+    #
+    # - The ContentsManager API expects blocking functions, not coroutines.
+    #
+    # - The API functions are called from inside couritines, and so from inside
+    #   a running event loop
+    #
+    # - In Tornado 5, which is required by JupyterHub > 0.9, calling HTTPClient
+    #   causes errors since it tries to start an event loop, and there can't
+    #   be more than one per thread
+    #
+    # ... we create the client in a another thread, and block this thread until
+    # the requests in that thread complete. Blocking the event loop appears to
+    # be unavoidable form the design of the ContentsManager API. A related issue
+    # is at https://github.com/jupyter/notebook/issues/3537 , where there is
+    # mention of changing the API to allow coroutines.
+    response = None
+    def request():
+        nonlocal response
+        request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
+        response = HTTPClient().fetch(request)
+    thread = threading.Thread(target=request)
+    thread.start()
+    thread.join()
+
     return response
 
 
