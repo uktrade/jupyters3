@@ -30,7 +30,7 @@ from notebook.services.contents.checkpoints import (
 
 DIRECTORY_SUFFIX = '.s3keep'
 NOTEBOOK_SUFFIX = '.ipynb'
-CHECKPOINT_SUFFIX = '__CHECKPOINTS__'
+CHECKPOINT_SUFFIX = '.checkpoints'
 Context = namedtuple('Context', ['logger', 'aws_endpoint', 'prefix'])
 
 
@@ -59,7 +59,7 @@ class JupyterS3Checkpoints(GenericCheckpointsMixin, Checkpoints):
 
 
 def _checkpoint_path(path, checkpoint_id):
-    return path + CHECKPOINT_SUFFIX + '/' + checkpoint_id
+    return path + '/' + CHECKPOINT_SUFFIX + '/' + checkpoint_id
 
 
 def _create_checkpoint(context, type, content, format, path):
@@ -86,11 +86,11 @@ def _delete_checkpoint(context, checkpoint_id, path):
 
 
 def _list_checkpoints(context, path):
-    key_prefix = _key(context, path + CHECKPOINT_SUFFIX + '/')
+    key_prefix = _key(context, path + '/' + CHECKPOINT_SUFFIX + '/')
     keys, _ = _list_immediate_child_keys_and_directories(context, key_prefix)
     return [
         {
-            'id': key[(key.rfind(CHECKPOINT_SUFFIX + '/') + len(CHECKPOINT_SUFFIX + '/')):],
+            'id': key[(key.rfind('/' + CHECKPOINT_SUFFIX + '/') + len('/' + CHECKPOINT_SUFFIX + '/')):],
             'last_modified': last_modified,
         }
         for key, last_modified in keys
@@ -248,6 +248,9 @@ def _get_directory(context, path, content):
     keys, directories = \
         _list_immediate_child_keys_and_directories(context, key_prefix) if content else \
         ([], [])
+
+    all_keys = {key for (key, _) in keys}
+
     return {
         'name': _final_path_component(path),
         'path': path,
@@ -264,7 +267,7 @@ def _get_directory(context, path, content):
                 'path': _path(context, directory),
             }
             for directory in directories
-            if CHECKPOINT_SUFFIX not in directory
+            if directory not in all_keys
         ] + [
             {
                 'type': _type_from_path_not_directory(key),
@@ -273,6 +276,7 @@ def _get_directory(context, path, content):
                 'last_modified': last_modified,
             }
             for (key, last_modified) in keys
+            if not key.endswith('/' + DIRECTORY_SUFFIX)
         ]) if content else None
     }
 
@@ -356,14 +360,14 @@ def _delete(context, path):
 
 
 def _list_immediate_child_keys_and_directories(context, key_prefix):
-    return _list_keys(context, key_prefix, '/', ['/' + DIRECTORY_SUFFIX])
+    return _list_keys(context, key_prefix, '/')
 
 
 def _list_all_descendant_keys(context, key_prefix):
-    return _list_keys(context, key_prefix, '', [])[0]
+    return _list_keys(context, key_prefix, '')[0]
 
 
-def _list_keys(context, key_prefix, delimeter, omit):
+def _list_keys(context, key_prefix, delimeter):
     common_query = {
         'max-keys': '1000',
         'list-type': '2',
@@ -400,8 +404,7 @@ def _list_keys(context, key_prefix, delimeter, omit):
                 key = _first_child_text(el, f'{namespace}Key')
                 last_modified_str = _first_child_text(el, f'{namespace}LastModified')
                 last_modified = datetime.datetime.strptime(last_modified_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                if not any([key.endswith(o) for o in omit]):
-                    keys.append((key, last_modified))
+                keys.append((key, last_modified))
             if el.tag == f'{namespace}CommonPrefixes':
                 # Prefixes end in '/', which we strip off
                 directories.append(_first_child_text(el, f'{namespace}Prefix')[:-1])
