@@ -61,7 +61,7 @@ where JupyterS3ECSRoleAuthentication does not have configurable options.
 
 - Multiple checkpoints are saved.
 
-- The event loop is mostly not blocked during requests to S3. There are some exceptions due to Jupyter Notebook expecting certain requests to block.
+- The event loop is not blocked during requests to S3.
 
 - Uploading arbitrary files, such as JPEGs, and viewing them in Jupyter or downloading them, works.
 
