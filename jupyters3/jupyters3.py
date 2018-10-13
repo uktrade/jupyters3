@@ -34,7 +34,7 @@ CHECKPOINT_SUFFIX = '__CHECKPOINTS__'
 Context = namedtuple('Context', ['logger', 'aws_endpoint', 'prefix'])
 
 
-class S3Checkpoints(GenericCheckpointsMixin, Checkpoints):
+class JupyterS3Checkpoints(GenericCheckpointsMixin, Checkpoints):
 
     def create_file_checkpoint(self, content, format, path):
         return _create_checkpoint(self.parent._context(), 'file', content, format, path)
@@ -111,7 +111,7 @@ class JupyterS3(ContentsManager):
     aws_secret_access_key = Unicode(config=True)
     prefix = Unicode(config=True)
 
-    checkpoints_class = Type(S3Checkpoints, config=True)
+    checkpoints_class = Type(JupyterS3Checkpoints, config=True)
 
     def dir_exists(self, path):
         return _dir_exists(self._context(), path)
