@@ -1,1 +1,1 @@
-from .jupyers3 import JupyterS3
+from .jupyters3 import JupyterS3
