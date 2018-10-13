@@ -348,7 +348,7 @@ def _delete(context, path):
     key = _key(context, path)
 
     keys = \
-        _list_all_descendant_keys(context, '/' + key + '/') if type == 'directory' else \
+        _list_all_descendant_keys(context, key + '/') if type == 'directory' else \
         [(key, None)]
 
     for (key, _) in keys:
