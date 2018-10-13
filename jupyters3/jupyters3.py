@@ -203,7 +203,7 @@ def _file_exists(context, path):
         except HTTPError as exception:
             if exception.response.code != 404:
                 raise
-            response = exception.response 
+            response = exception.response
 
         return response.code == 200
 
@@ -452,17 +452,28 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     # be unavoidable form the design of the ContentsManager API. A related issue
     # is at https://github.com/jupyter/notebook/issues/3537 , where there is
     # mention of changing the API to allow coroutines.
+    #
+    # Most of the Notebook codebase appears to use coroutines, so we stick with
+    # tornado for consistency, rather than using requests.
     response = None
+    exception = None
     def request():
         nonlocal response
-        request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
-        response = HTTPClient().fetch(request)
+        nonlocal exception
+        try:
+            request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
+            response = HTTPClient().fetch(request)
+        except BaseException as e:
+            exception = e
+
     thread = threading.Thread(target=request)
     thread.start()
     thread.join()
 
-    return response
-
+    if exception is not None:
+        raise exception
+    else:
+        return response
 
 def _aws_auth_headers(service, aws_endpoint, method, path, query, headers, payload):
     algorithm = 'AWS4-HMAC-SHA256'
