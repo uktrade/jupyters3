@@ -29,100 +29,11 @@ from nbformat.v4 import new_notebook
 from notebook.services.contents.manager import (
     ContentsManager,
 )
-from notebook.services.contents.checkpoints import (
-    Checkpoints,
-)
 
 DIRECTORY_SUFFIX = '.s3keep'
 NOTEBOOK_SUFFIX = '.ipynb'
 CHECKPOINT_SUFFIX = '.checkpoints'
 Context = namedtuple('Context', ['logger', 'aws_endpoint', 'prefix'])
-
-
-class JupyterS3Checkpoints(Checkpoints):
-
-    @gen.coroutine
-    def create_checkpoint(self, contents_mgr, path):
-        model = yield contents_mgr.get(path, content=True)
-        return (yield _create_checkpoint(self.parent._context(), model['type'], model['content'], model['format'], path))
-
-    @gen.coroutine
-    def restore_checkpoint(self, contents_mgr, checkpoint_id, path):
-        type = (yield contents_mgr.get(path, content=False))['type']
-        model = yield _get_model_at_checkpoint(self.parent._context(), type, checkpoint_id, path)
-        yield contents_mgr.save(model, path)
-
-    @gen.coroutine
-    def delete_checkpoint(self, checkpoint_id, path):
-        yield (_delete_checkpoint(self.parent._context(), checkpoint_id, path))
-
-    @gen.coroutine
-    def list_checkpoints(self, path):
-        return (yield _list_checkpoints(self.parent._context(), path))
-
-    @gen.coroutine
-    def rename_checkpoint(self, checkpoint_id, old_path, new_path):
-        yield _rename_checkpoint(self.parent._context(), checkpoint_id, old_path, new_path)
-
-    @gen.coroutine
-    def rename_all_checkpoints(self, old_path, new_path):
-        for cp in (yield self.list_checkpoints(old_path)):
-            yield self.rename_checkpoint(cp['id'], old_path, new_path)
-
-    @gen.coroutine
-    def delete_all_checkpoints(self, path):
-        for checkpoint in (yield self.list_checkpoints(path)):
-            yield self.delete_checkpoint(checkpoint['id'], path)
-
-
-def _checkpoint_path(path, checkpoint_id):
-    return path + '/' + CHECKPOINT_SUFFIX + '/' + checkpoint_id
-
-
-@gen.coroutine
-def _create_checkpoint(context, type, content, format, path):
-    checkpoint_id = str(int(time.time() * 1000000))
-    checkpoint_path = _checkpoint_path(path, checkpoint_id)
-    yield SAVERS[(type, format)](context, content, checkpoint_path)
-    # This is a new object, so shouldn't be any eventual consistency issues
-    checkpoint = yield GETTERS[(type, format)](context, checkpoint_path, False)
-    return {
-        'id': checkpoint_id,
-        'last_modified': checkpoint['last_modified'],
-    }
-
-
-@gen.coroutine
-def _get_model_at_checkpoint(context, type, checkpoint_id, path):
-    format = _format_from_type_and_path(context, type, path)
-    checkpoint_path = _checkpoint_path(path, checkpoint_id)
-    return (yield GETTERS[(type, format)](context, checkpoint_path, True))
-
-
-@gen.coroutine
-def _delete_checkpoint(context, checkpoint_id, path):
-    checkpoint_path = _checkpoint_path(path, checkpoint_id)
-    yield _delete(context, checkpoint_path)
-
-
-@gen.coroutine
-def _list_checkpoints(context, path):
-    key_prefix = _key(context, path + '/' + CHECKPOINT_SUFFIX + '/')
-    keys, _ = yield _list_immediate_child_keys_and_directories(context, key_prefix)
-    return [
-        {
-            'id': key[(key.rfind('/' + CHECKPOINT_SUFFIX + '/') + len('/' + CHECKPOINT_SUFFIX + '/')):],
-            'last_modified': last_modified,
-        }
-        for key, last_modified in keys
-    ]
-
-
-@gen.coroutine
-def _rename_checkpoint(context, checkpoint_id, old_path, new_path):
-    old_checkpoint_path = _checkpoint_path(old_path, checkpoint_id)
-    new_checkpoint_path = _checkpoint_path(new_path, checkpoint_id)
-    yield _rename(context, old_checkpoint_path, new_checkpoint_path)
 
 
 class JupyterS3(ContentsManager):
@@ -133,16 +44,16 @@ class JupyterS3(ContentsManager):
     aws_secret_access_key = Unicode(config=True)
     prefix = Unicode(config=True)
 
-    checkpoints_class = Type(JupyterS3Checkpoints, config=True)
-
-    def is_hidden(self, path):
-        return False
+    # Do not use a checkpoints class: the rest of the system
+    # only expects a ContentsManager
+    checkpoints_class = None
 
     # The dir_exists and file_exists functions are not expected
     # to be coroutines or return futures. They have to block the
     # event loop.
 
     def dir_exists(self, path):
+
         @gen.coroutine
         def dir_exists_async():
             return (yield _dir_exists(self._context(), path))
@@ -159,64 +70,41 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def get(self, path, content=True, type=None, format=None):
-        type_to_get = type if type is not None else (yield _type_from_path(self._context(), path))
-        format_to_get = format if format is not None else _format_from_type_and_path(self._context(), type_to_get, path)
-        return (yield GETTERS[(type_to_get, format_to_get)](self._context(), path, content))
+        return (yield _get(self._context(), path, content, type, format))
 
     @gen.coroutine
     def save(self, model, path):
-        type_to_save = model['type'] if 'type' in model else (yield _type_from_path(self._context(), path))
-        format_to_save = model['format'] if 'format' in model else _format_from_type_and_path(self._context(), type_to_save, path)
-        return (yield SAVERS[(type_to_save, format_to_save)](self._context(), model['content'] if 'content' in model else None, path))
-
-    @gen.coroutine
-    def delete_file(self, path):
-        return (yield _delete(self._context(), path))
+        return (yield _save(self._context(), model, path))
 
     @gen.coroutine
     def delete(self, path):
         path = path.strip('/')
         if not path:
             raise HTTPServerError(400, "Can't delete root")
-        yield self.delete_file(path)
-        yield self.checkpoints.delete_all_checkpoints(path)
 
-    @gen.coroutine
-    def rename_file(self, old_path, new_path):
-        return (yield _rename(self._context(), old_path, new_path))
-
-    @gen.coroutine
-    def rename(self, old_path, new_path):
-        if (not (yield _exists(self._context(), old_path))):
-            raise HTTPServerError(400, "Source does not exist")
-
-        if (yield _exists(self._context(), new_path)):
-            raise HTTPServerError(400, "Target already exists")
-
-        yield self.rename_file(old_path, new_path)
-        yield self.checkpoints.rename_all_checkpoints(old_path, new_path)
+        context = self._context()
+        yield  _delete(context, path)
+        for checkpoint in (yield _list_checkpoints(context, path)):
+            yield _delete_checkpoint(context, checkpoint['id'], path)
 
     @gen.coroutine
     def update(self, model, path):
-        path = path.strip('/')
+        old_path = path.strip('/')
         new_path = model.get('path', path).strip('/')
-        if path != new_path:
-            yield self.rename(path, new_path)
-        model = yield self.get(new_path, content=False)
+        context = self._context()
+
+        if (not (yield _exists(context, old_path))):
+            raise HTTPServerError(400, "Source does not exist")
+
+        if (yield _exists(context, new_path)):
+            raise HTTPServerError(400, "Target already exists")
+
+        yield (yield _rename(context, old_path, new_path))
+        for checkpoint in (yield _list_checkpoints(context, old_path)):
+            yield _rename_checkpoint(context, checkpoint['id'], old_path, new_path)
+
+        model = yield _get(context, new_path, content=False, type=None, format=None)
         return model
-
-    @gen.coroutine
-    def increment_filename(self, filename, path='', insert=''):
-        path = path.strip('/')
-        basename, dot, ext = filename.partition('.')
-        suffix = dot + ext
-
-        for i in itertools.count():
-            insert_i = f'{insert}{i}' if i else ''
-            name = f'{basename}{insert_i}{suffix}'
-            if not (yield _exists(self._context(), f'{path}/{name}')):
-                break
-        return name
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
@@ -240,7 +128,7 @@ class JupyterS3(ContentsManager):
             '.ipynb' if model_type == 'notebook' else \
             ext
 
-        name = yield self.increment_filename(untitled + ext, path, insert=insert)
+        name = yield _increment_filename(self._context(), untitled + ext, path, insert=insert)
         path = u'{0}/{1}'.format(path, name)
 
         model = {
@@ -268,8 +156,9 @@ class JupyterS3(ContentsManager):
     @gen.coroutine
     def copy(self, from_path, to_path=None):
         path = from_path.strip('/')
+        context = self._context()
 
-        model = yield self.get(path)
+        model = yield _get(context, path, content=True, type=None, format=None)
         if model['type'] == 'directory':
             raise HTTPServerError(400, "Can't copy directories")
 
@@ -281,31 +170,31 @@ class JupyterS3(ContentsManager):
             to_path.strip('/') if to_path is not None else \
             from_dir
 
-        if (yield _dir_exists(self._context(), to_path)):
+        if (yield _dir_exists(context, to_path)):
             name = copy_pat.sub(u'.', from_name)
-            to_name = yield self.increment_filename(name, to_path, insert='-Copy')
+            to_name = yield _increment_filename(context, name, to_path, insert='-Copy')
             to_path = u'{0}/{1}'.format(to_path, to_name)
 
         model.pop('path', None)
         model.pop('name', None)
 
-        return (yield self.save(model, to_path))
+        return (yield _save(context, model, to_path))
 
     @gen.coroutine
     def create_checkpoint(self, path):
-        return (yield self.checkpoints.create_checkpoint(self, path))
+        return (yield _create_checkpoint(self._context(), path))
 
     @gen.coroutine
     def restore_checkpoint(self, checkpoint_id, path):
-        return (yield self.checkpoints.restore_checkpoint(self, checkpoint_id, path))
+        return (yield _restore_checkpoint(self._context(), checkpoint_id, path))
 
     @gen.coroutine
     def list_checkpoints(self, path):
-        return (yield self.checkpoints.list_checkpoints(path))
+        return (yield _list_checkpoints(self._context(), path))
 
     @gen.coroutine
     def delete_checkpoint(self, checkpoint_id, path):
-        return (yield self.checkpoints.delete_checkpoint(checkpoint_id, path))
+        return (yield _delete_checkpoint(self._context(), checkpoint_id, path))
 
     def _context(self):
         return Context(
@@ -390,22 +279,29 @@ def _exists(context, path):
 
 
 @gen.coroutine
+def _get(context, path, content, type, format):
+    type_to_get = type if type is not None else (yield _type_from_path(context, path))
+    format_to_get = format if format is not None else _format_from_type_and_path(context, type_to_get, path)
+    return (yield GETTERS[(type_to_get, format_to_get)](context, path, content))
+
+
+@gen.coroutine
 def _get_notebook(context, path, content):
-    return (yield _get(context, path, content, 'notebook', None, 'json', lambda file_bytes: json.loads(file_bytes.decode('utf-8'))))
+    return (yield _get_any(context, path, content, 'notebook', None, 'json', lambda file_bytes: json.loads(file_bytes.decode('utf-8'))))
 
 
 @gen.coroutine
 def _get_file_base64(context, path, content):
-    return (yield _get(context, path, content, 'file', 'application/octet-stream', 'base64', lambda file_bytes: base64.b64encode(file_bytes).decode('utf-8')))
+    return (yield _get_any(context, path, content, 'file', 'application/octet-stream', 'base64', lambda file_bytes: base64.b64encode(file_bytes).decode('utf-8')))
 
 
 @gen.coroutine
 def _get_file_text(context, path, content):
-    return (yield _get(context, path, content, 'file', 'text/plain', 'text', lambda file_bytes: file_bytes.decode('utf-8')))
+    return (yield _get_any(context, path, content, 'file', 'text/plain', 'text', lambda file_bytes: file_bytes.decode('utf-8')))
 
 
 @gen.coroutine
-def _get(context, path, content, type, mimetype, format, decode):
+def _get_any(context, path, content, type, mimetype, format, decode):
     method = 'GET' if content else 'HEAD'
     key = _key(context, path)
     response = yield _make_s3_request(context, method, '/' + key, {}, {}, b'')
@@ -466,27 +362,34 @@ def _get_directory(context, path, content):
 
 
 @gen.coroutine
+def _save(context, model, path):
+    type_to_save = model['type'] if 'type' in model else (yield _type_from_path(context, path))
+    format_to_save = model['format'] if 'format' in model else _format_from_type_and_path(context, type_to_save, path)
+    return (yield SAVERS[(type_to_save, format_to_save)](context, model['content'] if 'content' in model else None, path))
+
+
+@gen.coroutine
 def _save_notebook(context, content, path):
-    return (yield _save(context, json.dumps(content).encode('utf-8'), path, 'notebook', None))
+    return (yield _save_any(context, json.dumps(content).encode('utf-8'), path, 'notebook', None))
 
 
 @gen.coroutine
 def _save_file_base64(context, content, path):
-    return (yield _save(context, base64.b64decode(content.encode('utf-8')), path, 'file', 'application/octet-stream'))
+    return (yield _save_any(context, base64.b64decode(content.encode('utf-8')), path, 'file', 'application/octet-stream'))
 
 
 @gen.coroutine
 def _save_file_text(context, content, path):
-    return (yield _save(context, content.encode('utf-8'), path, 'file', 'text/plain'))
+    return (yield _save_any(context, content.encode('utf-8'), path, 'file', 'text/plain'))
 
 
 @gen.coroutine
 def _save_directory(context, content, path):
-    return (yield _save(context, b'', path + '/' + DIRECTORY_SUFFIX, 'directory', None))
+    return (yield _save_any(context, b'', path + '/' + DIRECTORY_SUFFIX, 'directory', None))
 
 
 @gen.coroutine
-def _save(context, content_bytes, path, type, mimetype):
+def _save_any(context, content_bytes, path, type, mimetype):
     key = _key(context, path)
     response = yield _make_s3_request(context, 'PUT', '/' + key, {}, {}, content_bytes)
     last_modified_str = response.headers['Date']
@@ -502,6 +405,82 @@ def _save(context, content_bytes, path, type, mimetype):
         'format': None,
         'content': None,
     }
+
+
+@gen.coroutine
+def _increment_filename(context, filename, path='', insert=''):
+    path = path.strip('/')
+    basename, dot, ext = filename.partition('.')
+    suffix = dot + ext
+
+    for i in itertools.count():
+        insert_i = f'{insert}{i}' if i else ''
+        name = f'{basename}{insert_i}{suffix}'
+        if not (yield _exists(context, f'{path}/{name}')):
+            break
+    return name
+
+
+def _checkpoint_path(path, checkpoint_id):
+    return path + '/' + CHECKPOINT_SUFFIX + '/' + checkpoint_id
+
+
+@gen.coroutine
+def _create_checkpoint(context, path):
+    model = yield _get(context, path, content=True, type=None, format=None)
+    type = model['type']
+    content = model['content']
+    format = model['format']
+
+    checkpoint_id = str(int(time.time() * 1000000))
+    checkpoint_path = _checkpoint_path(path, checkpoint_id)
+    yield SAVERS[(type, format)](context, content, checkpoint_path)
+    # This is a new object, so shouldn't be any eventual consistency issues
+    checkpoint = yield GETTERS[(type, format)](context, checkpoint_path, False)
+    return {
+        'id': checkpoint_id,
+        'last_modified': checkpoint['last_modified'],
+    }
+
+
+@gen.coroutine
+def _get_model_at_checkpoint(context, type, checkpoint_id, path):
+    format = _format_from_type_and_path(context, type, path)
+    checkpoint_path = _checkpoint_path(path, checkpoint_id)
+    return (yield GETTERS[(type, format)](context, checkpoint_path, True))
+
+
+@gen.coroutine
+def _restore_checkpoint(context, checkpoint_id, path):
+    type = (yield _get(context, path, content=False, type=None, format=None))['type']
+    model = yield _get_model_at_checkpoint(context, type, checkpoint_id, path)
+    yield _save(context, model, path)
+
+
+@gen.coroutine
+def _delete_checkpoint(context, checkpoint_id, path):
+    checkpoint_path = _checkpoint_path(path, checkpoint_id)
+    yield _delete(context, checkpoint_path)
+
+
+@gen.coroutine
+def _list_checkpoints(context, path):
+    key_prefix = _key(context, path + '/' + CHECKPOINT_SUFFIX + '/')
+    keys, _ = yield _list_immediate_child_keys_and_directories(context, key_prefix)
+    return [
+        {
+            'id': key[(key.rfind('/' + CHECKPOINT_SUFFIX + '/') + len('/' + CHECKPOINT_SUFFIX + '/')):],
+            'last_modified': last_modified,
+        }
+        for key, last_modified in keys
+    ]
+
+
+@gen.coroutine
+def _rename_checkpoint(context, checkpoint_id, old_path, new_path):
+    old_checkpoint_path = _checkpoint_path(old_path, checkpoint_id)
+    new_checkpoint_path = _checkpoint_path(new_path, checkpoint_id)
+    yield _rename(context, old_checkpoint_path, new_checkpoint_path)
 
 
 @gen.coroutine
