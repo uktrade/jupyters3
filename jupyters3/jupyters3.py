@@ -100,12 +100,9 @@ class JupyterS3(ContentsManager):
         if (yield _exists(context, new_path)):
             raise HTTPServerError(400, "Target already exists")
 
-        yield (yield _rename(context, old_path, new_path))
-        for checkpoint in (yield _list_checkpoints(context, old_path)):
-            yield _rename_checkpoint(context, checkpoint['id'], old_path, new_path)
+        yield _rename(context, old_path, new_path)
 
-        model = yield _get(context, new_path, content=False, type=None, format=None)
-        return model
+        return (yield _get(context, new_path, content=False, type=None, format=None))
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
@@ -479,13 +476,6 @@ def _list_checkpoints(context, path):
 
 
 @gen.coroutine
-def _rename_checkpoint(context, checkpoint_id, old_path, new_path):
-    old_checkpoint_path = _checkpoint_path(old_path, checkpoint_id)
-    new_checkpoint_path = _checkpoint_path(new_path, checkpoint_id)
-    yield _rename(context, old_checkpoint_path, new_checkpoint_path)
-
-
-@gen.coroutine
 def _rename(context, old_path, new_path):
     type = yield _type_from_path(context, old_path)
     old_key = _key(context, old_path)
@@ -494,11 +484,13 @@ def _rename(context, old_path, new_path):
     def replace_key_prefix(string):
         return new_key + string[len(old_key):]
 
-    renames = [
+    object_key = \
+        [] if type == 'directory' else \
+        [(old_key, new_key)]
+
+    renames = object_key + [
         (key, replace_key_prefix(key))
         for (key, _) in (yield _list_all_descendant_keys(context, old_key + '/'))
-    ] if type == 'directory' else [
-        (old_key, new_key)
     ]
 
     for (old_key, new_key) in renames:
