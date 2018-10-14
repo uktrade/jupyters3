@@ -64,7 +64,7 @@ class JupyterS3(ContentsManager):
 
         return _run_sync_in_new_thread(dir_exists_async)
 
-    def file_exists(self, path=''):
+    def file_exists(self, path):
 
         @gen.coroutine
         def file_exists_async():
@@ -73,7 +73,7 @@ class JupyterS3(ContentsManager):
         return _run_sync_in_new_thread(file_exists_async)
 
     @gen.coroutine
-    def get(self, path, content=True, type=None, format=None):
+    def get(self, path, content, type, format):
         return (yield _get(self._context(), path, content, type, format))
 
     @gen.coroutine
@@ -93,11 +93,11 @@ class JupyterS3(ContentsManager):
         return (yield _new_untitled(self._context(), path.strip('/'), type, ext))
 
     @gen.coroutine
-    def new(self, model=None, path=''):
+    def new(self, model, path):
         return (yield _new(self._context(), model, path.strip('/')))
 
     @gen.coroutine
-    def copy(self, from_path, to_path=None):
+    def copy(self, from_path, to_path):
         return (yield _copy(self._context(), from_path.strip('/'), to_path))
 
     @gen.coroutine
