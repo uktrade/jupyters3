@@ -39,6 +39,8 @@ You _must_ also set the following settings on `c.JupyterS3` in your config file.
 
 - Multiple checkpoints are saved.
 
+- The event loop is mostly not blocked during requests to S3. There are some exceptions due to Jupyter Notebook expecting certain requests to block.
+
 - Requests to S3 are host-style, using a custom domain for the bucket, rather that path-style.
 
 - AWS roles are not supported, although this may change.
