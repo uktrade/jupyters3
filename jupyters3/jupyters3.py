@@ -8,6 +8,7 @@ import itertools
 import json
 import mimetypes
 import threading
+import re
 import time
 import urllib
 import xml.etree.ElementTree as ET
@@ -171,6 +172,7 @@ class JupyterS3(ContentsManager):
             from_dir
 
         if (yield _dir_exists(context, to_path)):
+            copy_pat = re.compile(r'\-Copy\d*\.')
             name = copy_pat.sub(u'.', from_name)
             to_name = yield _increment_filename(context, name, to_path, insert='-Copy')
             to_path = u'{0}/{1}'.format(to_path, to_name)
