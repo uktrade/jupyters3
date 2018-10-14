@@ -85,8 +85,6 @@ class JupyterS3(ContentsManager):
 
         context = self._context()
         yield  _delete(context, path)
-        for checkpoint in (yield _list_checkpoints(context, path)):
-            yield _delete_checkpoint(context, checkpoint['id'], path)
 
     @gen.coroutine
     def update(self, model, path):
@@ -514,13 +512,18 @@ def _rename_key(context, old_key, new_key):
 @gen.coroutine
 def _delete(context, path):
     type = _type_from_path(context, path)
-    key = _key(context, path)
+    root_key = _key(context, path)
 
-    keys = \
-        (yield _list_all_descendant_keys(context, key + '/')) if type == 'directory' else \
-        [(key, None)]
+    object_key = \
+        [] if type == 'directory' else \
+        [root_key]
 
-    for (key, _) in keys:
+    keys = object_key + [
+        key
+        for (key, _) in (yield _list_all_descendant_keys(context, root_key + '/'))
+    ]
+
+    for key in keys:
         yield _make_s3_request(context, 'DELETE', '/' + key, {}, {}, b'')
 
 
