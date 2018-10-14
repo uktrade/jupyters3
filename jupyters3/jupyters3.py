@@ -83,19 +83,7 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def update(self, model, path):
-        old_path = path.strip('/')
-        new_path = model.get('path', path).strip('/')
-        context = self._context()
-
-        if (not (yield _exists(context, old_path))):
-            raise HTTPServerError(400, "Source does not exist")
-
-        if (yield _exists(context, new_path)):
-            raise HTTPServerError(400, "Target already exists")
-
-        yield _rename(context, old_path, new_path)
-
-        return (yield _get(context, new_path, content=False, type=None, format=None))
+        return (yield _rename(self._context(), path.strip('/'), model.get('path', path).strip('/')))
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
@@ -470,6 +458,12 @@ def _list_checkpoints(context, path):
 
 @gen.coroutine
 def _rename(context, old_path, new_path):
+    if (not (yield _exists(context, old_path))):
+        raise HTTPServerError(400, "Source does not exist")
+
+    if (yield _exists(context, new_path)):
+        raise HTTPServerError(400, "Target already exists")
+
     type = yield _type_from_path(context, old_path)
     old_key = _key(context, old_path)
     new_key = _key(context, new_path)
@@ -488,6 +482,8 @@ def _rename(context, old_path, new_path):
 
     for (old_key, new_key) in renames:
         yield _rename_key(context, old_key, new_key)
+
+    return (yield _get(context, new_path, content=False, type=None, format=None))
 
 
 @gen.coroutine
