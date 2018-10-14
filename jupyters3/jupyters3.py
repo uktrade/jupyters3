@@ -79,12 +79,7 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def delete(self, path):
-        path = path.strip('/')
-        if not path:
-            raise HTTPServerError(400, "Can't delete root")
-
-        context = self._context()
-        yield  _delete(context, path)
+        yield  _delete(self._context(), path.strip('/'))
 
     @gen.coroutine
     def update(self, model, path):
@@ -511,6 +506,9 @@ def _rename_key(context, old_key, new_key):
 
 @gen.coroutine
 def _delete(context, path):
+    if not path:
+        raise HTTPServerError(400, "Can't delete root")
+
     type = _type_from_path(context, path)
     root_key = _key(context, path)
 
