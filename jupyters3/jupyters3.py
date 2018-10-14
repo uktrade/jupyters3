@@ -34,7 +34,10 @@ from notebook.services.contents.manager import (
 DIRECTORY_SUFFIX = '.s3keep'
 NOTEBOOK_SUFFIX = '.ipynb'
 CHECKPOINT_SUFFIX = '.checkpoints'
-Context = namedtuple('Context', ['logger', 'aws_endpoint', 'prefix'])
+Context = namedtuple('Context', [
+    'logger', 'aws_endpoint', 'prefix',
+    'untitled_notebook', 'untitled_file', 'untitled_directory',
+])
 
 
 class JupyterS3(ContentsManager):
@@ -87,78 +90,15 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
-        path = path.strip('/')
-        if not (yield _dir_exists(self._context(), path)):
-            raise HTTPServerError(404, 'No such directory: %s' % path)
-
-        model_type = \
-            type if type else \
-            'notebook' if ext == '.ipynb' else \
-            'file'
-
-        untitled = \
-            self.untitled_directory if model_type == 'directory' else \
-            self.untitled_notebook if model_type == 'notebook' else \
-            self.untitled_file
-        insert = \
-            ' ' if model_type == 'directory' else \
-            ''
-        ext = \
-            '.ipynb' if model_type == 'notebook' else \
-            ext
-
-        name = yield _increment_filename(self._context(), untitled + ext, path, insert=insert)
-        path = u'{0}/{1}'.format(path, name)
-
-        model = {
-            'type': model_type,
-        }
-        return (yield self.new(model, path))
+        return (yield _new_untitled(self._context(), path.strip('/'), type, ext))
 
     @gen.coroutine
     def new(self, model=None, path=''):
-        path = path.strip('/')
-        if model is None:
-            model = {}
-
-        model.setdefault('type', 'notebook' if path.endswith('.ipynb') else 'file')
-
-        if 'content' not in model and model['type'] == 'notebook':
-            model['content'] = new_notebook()
-            model['format'] = 'json'
-        elif 'content' not in model and model['type'] == 'file':
-            model['content'] = ''
-            model['format'] = 'text'
-
-        return (yield self.save(model, path))
+        return (yield _new(self._context(), model, path.strip('/')))
 
     @gen.coroutine
     def copy(self, from_path, to_path=None):
-        path = from_path.strip('/')
-        context = self._context()
-
-        model = yield _get(context, path, content=True, type=None, format=None)
-        if model['type'] == 'directory':
-            raise HTTPServerError(400, "Can't copy directories")
-
-        from_dir, from_name = \
-            path.rsplit('/', 1) if '/' in path else \
-            ('', path)
-
-        to_path = \
-            to_path.strip('/') if to_path is not None else \
-            from_dir
-
-        if (yield _dir_exists(context, to_path)):
-            copy_pat = re.compile(r'\-Copy\d*\.')
-            name = copy_pat.sub(u'.', from_name)
-            to_name = yield _increment_filename(context, name, to_path, insert='-Copy')
-            to_path = u'{0}/{1}'.format(to_path, to_name)
-
-        model.pop('path', None)
-        model.pop('name', None)
-
-        return (yield _save(context, model, to_path))
+        return (yield _copy(self._context(), from_path.strip('/'), to_path))
 
     @gen.coroutine
     def create_checkpoint(self, path):
@@ -186,6 +126,9 @@ class JupyterS3(ContentsManager):
                 'secret_access_key': self.aws_secret_access_key,
             },
             prefix=self.prefix,
+            untitled_notebook=self.untitled_notebook,
+            untitled_file=self.untitled_file,
+            untitled_directory=self.untitled_directory,
         )
 
 
@@ -519,6 +462,79 @@ def _delete(context, path):
 
     for key in keys:
         yield _make_s3_request(context, 'DELETE', '/' + key, {}, {}, b'')
+
+
+@gen.coroutine
+def _new_untitled(context, path, type, ext):
+    if not (yield _dir_exists(context, path)):
+        raise HTTPServerError(404, 'No such directory: %s' % path)
+
+    model_type = \
+        type if type else \
+        'notebook' if ext == '.ipynb' else \
+        'file'
+
+    untitled = \
+        context.untitled_directory if model_type == 'directory' else \
+        context.untitled_notebook if model_type == 'notebook' else \
+        context.untitled_file
+    insert = \
+        ' ' if model_type == 'directory' else \
+        ''
+    ext = \
+        '.ipynb' if model_type == 'notebook' else \
+        ext
+
+    name = yield _increment_filename(context, untitled + ext, path, insert=insert)
+    path = u'{0}/{1}'.format(path, name)
+
+    model = {
+        'type': model_type,
+    }
+    return (yield _new(context, model, path))
+
+
+@gen.coroutine
+def _new(context, model, path):
+    if model is None:
+        model = {}
+
+    model.setdefault('type', 'notebook' if path.endswith('.ipynb') else 'file')
+
+    if 'content' not in model and model['type'] == 'notebook':
+        model['content'] = new_notebook()
+        model['format'] = 'json'
+    elif 'content' not in model and model['type'] == 'file':
+        model['content'] = ''
+        model['format'] = 'text'
+
+    return (yield _save(context, model, path))
+
+
+@gen.coroutine
+def _copy(context, from_path, to_path):
+    model = yield _get(context, from_path, content=True, type=None, format=None)
+    if model['type'] == 'directory':
+        raise HTTPServerError(400, "Can't copy directories")
+
+    from_dir, from_name = \
+        from_path.rsplit('/', 1) if '/' in from_path else \
+        ('', from_path)
+
+    to_path = \
+        to_path.strip('/') if to_path is not None else \
+        from_dir
+
+    if (yield _dir_exists(context, to_path)):
+        copy_pat = re.compile(r'\-Copy\d*\.')
+        name = copy_pat.sub(u'.', from_name)
+        to_name = yield _increment_filename(context, name, to_path, insert='-Copy')
+        to_path = u'{0}/{1}'.format(to_path, to_name)
+
+    model.pop('path', None)
+    model.pop('name', None)
+
+    return (yield _save(context, model, to_path))
 
 
 @gen.coroutine
