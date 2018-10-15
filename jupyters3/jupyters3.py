@@ -446,24 +446,24 @@ def _rename(context, old_path, new_path):
     ]
 
     for (old_key, new_key) in renames:
-        yield _rename_key(context, old_key, new_key)
+        # We can't really do a transaction on S3, and not sure if we can trust that on any error
+        # from DELETE, that the DELETE hasn't happened: even checking if the file is still there
+        # isn't bulletproof due to eventual consistency. So we risk duplicate files over risking
+        # deleted files
+        yield _copy_key(context, old_key, new_key)
+        yield _delete_key(context, old_key)
 
     return (yield _get(context, new_path, content=False, type=None, format=None))
 
 
 @gen.coroutine
-def _rename_key(context, old_key, new_key):
+def _copy_key(context, old_key, new_key):
     source_bucket = context.aws_endpoint['host'].split('.')[0]
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
         **context.aws_s3_put_headers,
     }
     yield _make_s3_request(context, 'PUT', '/' + new_key, {}, copy_headers, b'')
-    # We can't really do a transaction on S3, and not sure if we can trust that on any error
-    # from DELETE, that the DELETE hasn't happened: even checking if the file is still there
-    # isn't bulletproof due to eventual consistency. So we risk duplicate files over risking
-    # deleted files
-    yield _make_s3_request(context, 'DELETE', '/' + old_key, {}, {}, b'')
 
 
 @gen.coroutine
@@ -484,7 +484,12 @@ def _delete(context, path):
     ]
 
     for key in keys:
-        yield _make_s3_request(context, 'DELETE', '/' + key, {}, {}, b'')
+        yield _delete_key(context, key)
+
+
+@gen.coroutine
+def _delete_key(context, key):
+    yield _make_s3_request(context, 'DELETE', '/' + key, {}, {}, b'')
 
 
 @gen.coroutine
@@ -536,7 +541,7 @@ def _new(context, model, path):
 
 @gen.coroutine
 def _copy(context, from_path, to_path):
-    model = yield _get(context, from_path, content=True, type=None, format=None)
+    model = yield _get(context, from_path, content=False, type=None, format=None)
     if model['type'] == 'directory':
         raise HTTPServerError(400, "Can't copy directories")
 
@@ -554,10 +559,15 @@ def _copy(context, from_path, to_path):
         to_name = yield _increment_filename(context, name, to_path, insert='-Copy')
         to_path = u'{0}/{1}'.format(to_path, to_name)
 
-    model.pop('path', None)
-    model.pop('name', None)
+    from_key = _key(context, from_path)
+    to_key = _key(context, to_path)
 
-    return (yield _save(context, model, to_path))
+    yield _copy_key(context, from_key, to_key)
+    return {
+        **model,
+        'name': to_name,
+        'path': to_path,
+    }
 
 
 @gen.coroutine
