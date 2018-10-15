@@ -38,7 +38,7 @@ DIRECTORY_SUFFIX = '.s3keep'
 NOTEBOOK_SUFFIX = '.ipynb'
 CHECKPOINT_SUFFIX = '.checkpoints'
 Context = namedtuple('Context', [
-    'logger', 'aws_endpoint', 'prefix',
+    'logger', 'aws_endpoint', 'aws_s3_put_headers', 'prefix',
     'untitled_notebook', 'untitled_file', 'untitled_directory',
 ])
 
@@ -144,6 +144,9 @@ class JupyterS3(ContentsManager):
                 'host': self.aws_host,
                 'access_key_id': self.aws_access_key_id,
                 'secret_access_key': self.aws_secret_access_key,
+            },
+            aws_s3_put_headers={
+                'x-amz-server-side-encryption': 'AES256',
             },
             prefix=self.prefix,
             untitled_notebook=self.untitled_notebook,
@@ -334,7 +337,7 @@ def _save_directory(context, content, path):
 @gen.coroutine
 def _save_any(context, content_bytes, path, type, mimetype):
     key = _key(context, path)
-    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, {}, content_bytes)
+    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, context.aws_s3_put_headers, content_bytes)
     last_modified_str = response.headers['Date']
     last_modified = datetime.datetime.strptime(last_modified_str, "%a, %d %b %Y %H:%M:%S GMT")
     return {
@@ -453,6 +456,7 @@ def _rename_key(context, old_key, new_key):
     source_bucket = context.aws_endpoint['host'].split('.')[0]
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
+        **context.aws_s3_put_headers,
     }
     yield _make_s3_request(context, 'PUT', '/' + new_key, {}, copy_headers, b'')
     # We can't really do a transaction on S3, and not sure if we can trust that on any error
@@ -629,7 +633,6 @@ def _list_keys(context, key_prefix, delimeter):
 @gen.coroutine
 def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     service = 's3'
-
     auth_headers = _aws_auth_headers(service, context.aws_endpoint, method, path, query, non_auth_headers, payload)
     headers = {
         **non_auth_headers,

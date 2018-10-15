@@ -45,4 +45,6 @@ You _must_ also set the following settings on `c.JupyterS3` in your config file.
 
 - Requests to S3 are host-style, using a custom domain for the bucket, rather that path-style.
 
+- All objects stored in S3 are encrypted with `AES256` encryption. This is not configurable: it is not possible to turn this off or to encrypt using a specific KMS key.
+
 - AWS roles are not supported, although this may change.
