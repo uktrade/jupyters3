@@ -20,10 +20,13 @@ from tornado.httpclient import (
     HTTPRequest,
 )
 from tornado.ioloop import IOLoop
+from tornado.locks import Lock
 from tornado.web import HTTPError as HTTPServerError
 from traitlets import (
     Unicode,
+    Instance,
     Type,
+    default,
 )
 
 from nbformat.v4 import new_notebook
@@ -52,6 +55,14 @@ class JupyterS3(ContentsManager):
     # only expects a ContentsManager
     checkpoints_class = None
 
+    # Some of the write functions contain multiple S3 call
+    # We do what we can to prevent bad things from happening
+    write_lock = Instance(Lock)
+
+    @default('write_lock')
+    def _write_lock_default(self):
+        return Lock()
+
     # The dir_exists and file_exists functions are not expected
     # to be coroutines or return futures. They have to block the
     # event loop.
@@ -78,35 +89,43 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def save(self, model, path):
-        return (yield _save(self._context(), model, path))
+        with (yield self.write_lock.acquire()):
+            return (yield _save(self._context(), model, path))
 
     @gen.coroutine
     def delete(self, path):
-        yield  _delete(self._context(), path.strip('/'))
+        with (yield self.write_lock.acquire()):
+            yield _delete(self._context(), path.strip('/'))
 
     @gen.coroutine
     def update(self, model, path):
-        return (yield _rename(self._context(), path.strip('/'), model.get('path', path).strip('/')))
+        with (yield self.write_lock.acquire()):
+            return (yield _rename(self._context(), path.strip('/'), model.get('path', path).strip('/')))
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
-        return (yield _new_untitled(self._context(), path.strip('/'), type, ext))
+        with (yield self.write_lock.acquire()):
+            return (yield _new_untitled(self._context(), path.strip('/'), type, ext))
 
     @gen.coroutine
     def new(self, model, path):
-        return (yield _new(self._context(), model, path.strip('/')))
+        with (yield self.write_lock.acquire()):
+            return (yield _new(self._context(), model, path.strip('/')))
 
     @gen.coroutine
     def copy(self, from_path, to_path):
-        return (yield _copy(self._context(), from_path.strip('/'), to_path))
+        with (yield self.write_lock.acquire()):
+            return (yield _copy(self._context(), from_path.strip('/'), to_path))
 
     @gen.coroutine
     def create_checkpoint(self, path):
-        return (yield _create_checkpoint(self._context(), path))
+        with (yield self.write_lock.acquire()):
+            return (yield _create_checkpoint(self._context(), path))
 
     @gen.coroutine
     def restore_checkpoint(self, checkpoint_id, path):
-        return (yield _restore_checkpoint(self._context(), checkpoint_id, path))
+        with (yield self.write_lock.acquire()):
+            return (yield _restore_checkpoint(self._context(), checkpoint_id, path))
 
     @gen.coroutine
     def list_checkpoints(self, path):
@@ -114,7 +133,8 @@ class JupyterS3(ContentsManager):
 
     @gen.coroutine
     def delete_checkpoint(self, checkpoint_id, path):
-        return (yield _delete_checkpoint(self._context(), checkpoint_id, path))
+        with (yield self.write_lock.acquire()):
+            return (yield _delete_checkpoint(self._context(), checkpoint_id, path))
 
     def _context(self):
         return Context(
