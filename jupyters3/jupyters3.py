@@ -95,27 +95,27 @@ class JupyterS3(ContentsManager):
     @gen.coroutine
     def delete(self, path):
         with (yield self.write_lock.acquire()):
-            yield _delete(self._context(), path.strip('/'))
+            yield _delete(self._context(), path)
 
     @gen.coroutine
     def update(self, model, path):
         with (yield self.write_lock.acquire()):
-            return (yield _rename(self._context(), path.strip('/'), model.get('path', path).strip('/')))
+            return (yield _rename(self._context(), path, model.get('path', path)))
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
         with (yield self.write_lock.acquire()):
-            return (yield _new_untitled(self._context(), path.strip('/'), type, ext))
+            return (yield _new_untitled(self._context(), path, type, ext))
 
     @gen.coroutine
     def new(self, model, path):
         with (yield self.write_lock.acquire()):
-            return (yield _new(self._context(), model, path.strip('/')))
+            return (yield _new(self._context(), model, path))
 
     @gen.coroutine
     def copy(self, from_path, to_path):
         with (yield self.write_lock.acquire()):
-            return (yield _copy(self._context(), from_path.strip('/'), to_path))
+            return (yield _copy(self._context(), from_path, to_path))
 
     @gen.coroutine
     def create_checkpoint(self, path):
