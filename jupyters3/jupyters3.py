@@ -153,7 +153,7 @@ class JupyterS3(ContentsManager):
 
 
 # The documentation suggests that leading slashes in the
-# path are not present, but they sometimes seem to be
+# path are not present, but they are, mostly
 def _key(context, path):
     return context.prefix + path.lstrip('/')
 
@@ -195,7 +195,7 @@ def _type_from_path_not_directory(path):
 
 @gen.coroutine
 def _dir_exists(context, path):
-    return True if (path == '/' or path == '') else (yield _file_exists(context, path + '/' + DIRECTORY_SUFFIX))
+    return True if path == '/' else (yield _file_exists(context, path + '/' + DIRECTORY_SUFFIX))
 
 
 @gen.coroutine
@@ -352,14 +352,13 @@ def _save_any(context, content_bytes, path, type, mimetype):
 
 @gen.coroutine
 def _increment_filename(context, filename, path='', insert=''):
-    path = path.strip('/')
     basename, dot, ext = filename.partition('.')
     suffix = dot + ext
 
     for i in itertools.count():
         insert_i = f'{insert}{i}' if i else ''
         name = f'{basename}{insert_i}{suffix}'
-        if not (yield _exists(context, f'{path}/{name}')):
+        if not (yield _exists(context, f'/{path}/{name}')):
             break
     return name
 
@@ -542,7 +541,7 @@ def _copy(context, from_path, to_path):
         ('', from_path)
 
     to_path = \
-        to_path.strip('/') if to_path is not None else \
+        to_path if to_path is not None else \
         from_dir
 
     if (yield _dir_exists(context, to_path)):
