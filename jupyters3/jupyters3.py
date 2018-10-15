@@ -169,6 +169,16 @@ def _final_path_component(key_or_path):
     return key_or_path.split('/')[-1]
 
 
+# The sort keys keep the UI as reasonable as possible with long running
+# actions acting on multiple objects, including if things fail in the middle
+def _copy_sort_key(key):
+    return (key.count('/'), 0 if key.endswith('/' + DIRECTORY_SUFFIX) else 1)
+
+
+def _delete_sort_key(key):
+    return tuple(-1 * key_i for key_i in _copy_sort_key(key))
+
+
 # We don't save type/format to S3, so we do some educated guesswork
 # as to the types/formats of returned values.
 @gen.coroutine
@@ -445,12 +455,14 @@ def _rename(context, old_path, new_path):
         for (key, _) in (yield _list_all_descendant_keys(context, old_key + '/'))
     ]
 
-    for (old_key, new_key) in renames:
-        # We can't really do a transaction on S3, and not sure if we can trust that on any error
-        # from DELETE, that the DELETE hasn't happened: even checking if the file is still there
-        # isn't bulletproof due to eventual consistency. So we risk duplicate files over risking
-        # deleted files
+    # We can't really do a transaction on S3, and not sure if we can trust that on any error
+    # from DELETE, that the DELETE hasn't happened: even checking if the file is still there
+    # isn't bulletproof due to eventual consistency. So we risk duplicate files over risking
+    # deleted files
+    for (old_key, new_key) in object_key + sorted(renames, key=lambda k: _copy_sort_key(k[0])):
         yield _copy_key(context, old_key, new_key)
+
+    for (old_key, _) in sorted(renames, key=lambda k: _delete_sort_key(k[0])) + object_key:
         yield _delete_key(context, old_key)
 
     return (yield _get(context, new_path, content=False, type=None, format=None))
@@ -478,12 +490,12 @@ def _delete(context, path):
         [] if type == 'directory' else \
         [root_key]
 
-    keys = object_key + [
+    descendant_keys = [
         key
         for (key, _) in (yield _list_all_descendant_keys(context, root_key + '/'))
     ]
 
-    for key in keys:
+    for key in sorted(descendant_keys, key=_delete_sort_key) + object_key:
         yield _delete_key(context, key)
 
 
