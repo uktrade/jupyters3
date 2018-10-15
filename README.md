@@ -33,7 +33,7 @@ You _must_ also set the following settings on `c.JupyterS3` in your config file.
 
 ## Differences from S3Contents
 
-- There are no extra dependencies over those already required for Jupyter Notebook. Specifically, there is not a virtual filesystem abstraction used internally.
+- There are no extra dependencies over those already required for Jupyter Notebook. Specifically, there is no virtual filesystem library such as S3FS used, boto3 is not used, and Tornado is used as the HTTP client.
 
 - Checkpoints are also saved to S3, under the key `<file_name>/.checkpoints/`.
 
