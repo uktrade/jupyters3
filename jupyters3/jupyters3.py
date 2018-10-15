@@ -100,7 +100,7 @@ class JupyterS3(ContentsManager):
     @gen.coroutine
     def update(self, model, path):
         with (yield self.write_lock.acquire()):
-            return (yield _rename(self._context(), path, model.get('path', path)))
+            return (yield _rename(self._context(), path, model['path']))
 
     @gen.coroutine
     def new_untitled(self, path='', type='', ext=''):
