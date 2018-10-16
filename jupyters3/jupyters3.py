@@ -37,9 +37,12 @@ from notebook.services.contents.manager import (
 DIRECTORY_SUFFIX = '.s3keep'
 NOTEBOOK_SUFFIX = '.ipynb'
 CHECKPOINT_SUFFIX = '.checkpoints'
+UNTITLED_NOTEBOOK = 'Untitled'
+UNTITLED_FILE = 'Untitled'
+UNTITLED_DIRECTORY  = 'Untitled Folder'
+
 Context = namedtuple('Context', [
     'logger', 'aws_endpoint', 'aws_s3_put_headers', 'prefix',
-    'untitled_notebook', 'untitled_file', 'untitled_directory',
 ])
 
 
@@ -149,9 +152,6 @@ class JupyterS3(ContentsManager):
                 'x-amz-server-side-encryption': 'AES256',
             },
             prefix=self.prefix,
-            untitled_notebook=self.untitled_notebook,
-            untitled_file=self.untitled_file,
-            untitled_directory=self.untitled_directory,
         )
 
 
@@ -515,9 +515,9 @@ def _new_untitled(context, path, type, ext):
         'file'
 
     untitled = \
-        context.untitled_directory if model_type == 'directory' else \
-        context.untitled_notebook if model_type == 'notebook' else \
-        context.untitled_file
+        UNTITLED_DIRECTORY if model_type == 'directory' else \
+        UNTITLED_NOTEBOOK if model_type == 'notebook' else \
+        UNTITLED_FILE
     insert = \
         ' ' if model_type == 'directory' else \
         ''
