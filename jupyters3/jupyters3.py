@@ -40,9 +40,12 @@ CHECKPOINT_SUFFIX = '.checkpoints'
 UNTITLED_NOTEBOOK = 'Untitled'
 UNTITLED_FILE = 'Untitled'
 UNTITLED_DIRECTORY  = 'Untitled Folder'
+AWS_S3_PUT_HEADERS = {
+    'x-amz-server-side-encryption': 'AES256',
+}
 
 Context = namedtuple('Context', [
-    'logger', 'aws_endpoint', 'aws_s3_put_headers', 'prefix',
+    'logger', 'aws_endpoint', 'prefix',
 ])
 
 
@@ -147,9 +150,6 @@ class JupyterS3(ContentsManager):
                 'host': self.aws_host,
                 'access_key_id': self.aws_access_key_id,
                 'secret_access_key': self.aws_secret_access_key,
-            },
-            aws_s3_put_headers={
-                'x-amz-server-side-encryption': 'AES256',
             },
             prefix=self.prefix,
         )
@@ -347,7 +347,7 @@ def _save_directory(context, content, path):
 @gen.coroutine
 def _save_any(context, content_bytes, path, type, mimetype):
     key = _key(context, path)
-    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, context.aws_s3_put_headers, content_bytes)
+    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, AWS_S3_PUT_HEADERS, content_bytes)
     last_modified_str = response.headers['Date']
     last_modified = datetime.datetime.strptime(last_modified_str, "%a, %d %b %Y %H:%M:%S GMT")
     return {
@@ -473,7 +473,7 @@ def _copy_key(context, old_key, new_key):
     source_bucket = context.aws_endpoint['host'].split('.')[0]
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
-        **context.aws_s3_put_headers,
+        **AWS_S3_PUT_HEADERS,
     }
     yield _make_s3_request(context, 'PUT', '/' + new_key, {}, copy_headers, b'')
 
