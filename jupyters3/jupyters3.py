@@ -45,7 +45,7 @@ AWS_S3_PUT_HEADERS = {
 }
 
 Context = namedtuple('Context', [
-    'logger', 'prefix', 's3_host', 's3_auth',
+    'logger', 'prefix', 's3_bucket', 's3_host', 's3_auth',
 ])
 AwsAuth = namedtuple('AwsAuth', [
     'host', 'region', 'access_key_id', 'secret_access_key',
@@ -54,6 +54,7 @@ AwsAuth = namedtuple('AwsAuth', [
 
 class JupyterS3(ContentsManager):
 
+    aws_s3_bucket = Unicode(config=True)
     aws_s3_host = Unicode(config=True)
     aws_region = Unicode(config=True)
     aws_access_key_id = Unicode(config=True)
@@ -148,6 +149,7 @@ class JupyterS3(ContentsManager):
     def _context(self):
         return Context(
             logger=self.log,
+            s3_bucket=self.aws_s3_bucket,
             s3_host=self.aws_s3_host,
             s3_auth=AwsAuth(
                 host=self.aws_s3_host,
@@ -474,7 +476,7 @@ def _rename(context, old_path, new_path):
 
 @gen.coroutine
 def _copy_key(context, old_key, new_key):
-    source_bucket = context.s3_host.split('.')[0]
+    source_bucket = context.s3_bucket
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
         **AWS_S3_PUT_HEADERS,
