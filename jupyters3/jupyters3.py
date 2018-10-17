@@ -45,14 +45,17 @@ AWS_S3_PUT_HEADERS = {
 }
 
 Context = namedtuple('Context', [
-    'logger', 'aws_endpoint', 'prefix',
+    'logger', 'prefix', 's3_host', 's3_auth',
+])
+AwsAuth = namedtuple('AwsAuth', [
+    'host', 'region', 'access_key_id', 'secret_access_key',
 ])
 
 
 class JupyterS3(ContentsManager):
 
+    aws_s3_host = Unicode(config=True)
     aws_region = Unicode(config=True)
-    aws_host = Unicode(config=True)
     aws_access_key_id = Unicode(config=True)
     aws_secret_access_key = Unicode(config=True)
     prefix = Unicode(config=True)
@@ -145,12 +148,13 @@ class JupyterS3(ContentsManager):
     def _context(self):
         return Context(
             logger=self.log,
-            aws_endpoint={
-                'region': self.aws_region,
-                'host': self.aws_host,
-                'access_key_id': self.aws_access_key_id,
-                'secret_access_key': self.aws_secret_access_key,
-            },
+            s3_host=self.aws_s3_host,
+            s3_auth=AwsAuth(
+                host=self.aws_s3_host,
+                region=self.aws_region,
+                access_key_id=self.aws_access_key_id,
+                secret_access_key=self.aws_secret_access_key,
+            ),
             prefix=self.prefix,
         )
 
@@ -470,7 +474,7 @@ def _rename(context, old_path, new_path):
 
 @gen.coroutine
 def _copy_key(context, old_key, new_key):
-    source_bucket = context.aws_endpoint['host'].split('.')[0]
+    source_bucket = context.s3_host.split('.')[0]
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
         **AWS_S3_PUT_HEADERS,
@@ -655,31 +659,31 @@ def _list_keys(context, key_prefix, delimeter):
 @gen.coroutine
 def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     service = 's3'
-    auth_headers = _aws_auth_headers(service, context.aws_endpoint, method, path, query, non_auth_headers, payload)
+    auth_headers = _aws_auth_headers(service, context.s3_auth, method, path, query, non_auth_headers, payload)
     headers = {
         **non_auth_headers,
         **auth_headers,
     }
 
-    url = f'https://{context.aws_endpoint["host"]}{path}'
+    url = f'https://{context.s3_host}{path}'
     querystring = '&'.join([
         urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(value, safe='~')
         for key, value in query.items()
     ])
     encoded_path = urllib.parse.quote(path, safe='/~')
-    url = f'https://{context.aws_endpoint["host"]}{encoded_path}' + (('?' + querystring) if querystring else '')
+    url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
 
     request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
     return (yield AsyncHTTPClient().fetch(request))
 
 
-def _aws_auth_headers(service, aws_endpoint, method, path, query, headers, payload):
+def _aws_auth_headers(service, auth, method, path, query, headers, payload):
     algorithm = 'AWS4-HMAC-SHA256'
 
     now = datetime.datetime.utcnow()
     amzdate = now.strftime('%Y%m%dT%H%M%SZ')
     datestamp = now.strftime('%Y%m%d')
-    credential_scope = f'{datestamp}/{aws_endpoint["region"]}/{service}/aws4_request'
+    credential_scope = f'{datestamp}/{auth.region}/{service}/aws4_request'
     headers_lower = {
         header_key.lower().strip(): header_value.strip()
         for header_key, header_value in headers.items()
@@ -693,7 +697,7 @@ def _aws_auth_headers(service, aws_endpoint, method, path, query, headers, paylo
         def canonical_request():
             header_values = {
                 **headers_lower,
-                'host': aws_endpoint['host'],
+                'host': auth.host,
                 'x-amz-date': amzdate,
             }
 
@@ -718,8 +722,8 @@ def _aws_auth_headers(service, aws_endpoint, method, path, query, headers, paylo
             f'{algorithm}\n{amzdate}\n{credential_scope}\n' + \
             hashlib.sha256(canonical_request().encode('utf-8')).hexdigest()
 
-        date_key = sign(('AWS4' + aws_endpoint['secret_access_key']).encode('utf-8'), datestamp)
-        region_key = sign(date_key, aws_endpoint['region'])
+        date_key = sign(('AWS4' + auth.secret_access_key).encode('utf-8'), datestamp)
+        region_key = sign(date_key, auth.region)
         service_key = sign(region_key, service)
         request_key = sign(service_key, 'aws4_request')
         return sign(request_key, string_to_sign).hex()
@@ -728,7 +732,7 @@ def _aws_auth_headers(service, aws_endpoint, method, path, query, headers, paylo
         'x-amz-date': amzdate,
         'x-amz-content-sha256': payload_hash,
         'Authorization': (
-            f'{algorithm} Credential={aws_endpoint["access_key_id"]}/{credential_scope}, ' +
+            f'{algorithm} Credential={auth.access_key_id}/{credential_scope}, ' +
             f'SignedHeaders={signed_headers}, Signature=' + signature()
         ),
     }
