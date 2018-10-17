@@ -46,10 +46,40 @@ AWS_S3_PUT_HEADERS = {
 
 Context = namedtuple('Context', [
     'logger', 'prefix', 's3_bucket', 's3_host', 's3_auth',
+    'multipart_uploads',
 ])
 AwsAuth = namedtuple('AwsAuth', [
     'host', 'region', 'access_key_id', 'secret_access_key',
 ])
+
+
+class ExpiringDict:
+
+    def __init__(self, seconds):
+        self._seconds = seconds
+        self._store = {}
+
+    def _remove_old_keys(self, now):
+        self._store = {
+            key: (expires, value)
+            for key, (expires, value) in self._store.items()
+            if expires > now
+        }
+
+    def __getitem__(self, key):
+        now = int(time.time())
+        self._remove_old_keys(now)
+        return self._store[key][1]
+
+    def __setitem__(self, key, value):
+        now = int(time.time())
+        self._remove_old_keys(now)
+        self._store[key] = (now + self._seconds, value)
+
+    def __delitem__(self, key):
+        now = int(time.time())
+        self._remove_old_keys(now)
+        del self._store[key]
 
 
 class JupyterS3(ContentsManager):
@@ -73,9 +103,17 @@ class JupyterS3(ContentsManager):
     def _write_lock_default(self):
         return Lock()
 
-    # The dir_exists and file_exists functions are not expected
-    # to be coroutines or return futures. They have to block the
-    # event loop.
+    multipart_uploads = Instance(ExpiringDict)
+
+    @default('multipart_uploads')
+    def _multipart_uploads_default(self):
+        return ExpiringDict(60 * 60 * 1)
+
+    def is_hidden(self, path):
+        return False
+
+    # The next functions are not expected to be coroutines
+    # or return futures. They have to block the event loop.
 
     def dir_exists(self, path):
 
@@ -93,9 +131,13 @@ class JupyterS3(ContentsManager):
 
         return _run_sync_in_new_thread(file_exists_async)
 
-    @gen.coroutine
-    def get(self, path, content, type, format):
-        return (yield _get(self._context(), path, content, type, format))
+    def get(self, path, content, type, format=None):
+
+        @gen.coroutine
+        def get_async():
+            return (yield _get(self._context(), path, content, type, format))
+
+        return _run_sync_in_new_thread(get_async)
 
     @gen.coroutine
     def save(self, model, path):
@@ -158,6 +200,7 @@ class JupyterS3(ContentsManager):
                 secret_access_key=self.aws_secret_access_key,
             ),
             prefix=self.prefix,
+            multipart_uploads=self.multipart_uploads,
         )
 
 
@@ -327,35 +370,71 @@ def _get_directory(context, path, content):
 def _save(context, model, path):
     type_to_save = model['type'] if 'type' in model else (yield _type_from_path(context, path))
     format_to_save = model['format'] if 'format' in model else _format_from_type_and_path(context, type_to_save, path)
-    return (yield SAVERS[(type_to_save, format_to_save)](context, model['content'] if 'content' in model else None, path))
+    return (yield SAVERS[(type_to_save, format_to_save)](
+        context,
+        model['chunk'] if 'chunk' in model else None,
+        model['content'] if 'content' in model else None,
+        path,
+    ))
 
 
 @gen.coroutine
-def _save_notebook(context, content, path):
-    return (yield _save_any(context, json.dumps(content).encode('utf-8'), path, 'notebook', None))
+def _save_notebook(context, chunk, content, path):
+    return (yield _save_any(context, chunk, json.dumps(content).encode('utf-8'), path, 'notebook', None))
 
 
 @gen.coroutine
-def _save_file_base64(context, content, path):
-    return (yield _save_any(context, base64.b64decode(content.encode('utf-8')), path, 'file', 'application/octet-stream'))
+def _save_file_base64(context, chunk, content, path):
+    return (yield _save_any(context, chunk, base64.b64decode(content.encode('utf-8')), path, 'file', 'application/octet-stream'))
 
 
 @gen.coroutine
-def _save_file_text(context, content, path):
-    return (yield _save_any(context, content.encode('utf-8'), path, 'file', 'text/plain'))
+def _save_file_text(context, chunk, content, path):
+    return (yield _save_any(context, chunk, content.encode('utf-8'), path, 'file', 'text/plain'))
 
 
 @gen.coroutine
-def _save_directory(context, content, path):
-    return (yield _save_any(context, b'', path + '/' + DIRECTORY_SUFFIX, 'directory', None))
+def _save_directory(context, chunk, content, path):
+    return (yield _save_any(context, chunk, b'', path + '/' + DIRECTORY_SUFFIX, 'directory', None))
 
 
 @gen.coroutine
-def _save_any(context, content_bytes, path, type, mimetype):
+def _save_any(context, chunk, content_bytes, path, type, mimetype):
+    response = \
+        (yield _save_bytes(context, content_bytes, path, type, mimetype)) if chunk is None else \
+        (yield _save_chunk(context, chunk, content_bytes, path, type, mimetype))
+
+    return response
+
+
+@gen.coroutine
+def _save_chunk(context, chunk, content_bytes, path, type, mimetype):
+    print('MULTIPART', context.multipart_uploads)
+    # Chunks are 1-indexed
+    if chunk == 1:
+        context.multipart_uploads[path] = []
+    context.multipart_uploads[path].append(content_bytes)
+
+    # -1 is the last chunk
+    if chunk == -1:
+        combined_bytes = b''.join(context.multipart_uploads[path])
+        del context.multipart_uploads[path]
+        return (yield _save_bytes(context, combined_bytes, path, type, mimetype))
+    else:
+        return _saved_model(path, type, mimetype, datetime.datetime.now())
+
+
+@gen.coroutine
+def _save_bytes(context, content_bytes, path, type, mimetype):
     key = _key(context, path)
     response = yield _make_s3_request(context, 'PUT', '/' + key, {}, AWS_S3_PUT_HEADERS, content_bytes)
+
     last_modified_str = response.headers['Date']
     last_modified = datetime.datetime.strptime(last_modified_str, "%a, %d %b %Y %H:%M:%S GMT")
+    return _saved_model(path, type, mimetype, last_modified)
+
+
+def _saved_model(path, type, mimetype, last_modified):
     return {
         'name': _final_path_component(path),
         'path': path,
@@ -395,7 +474,7 @@ def _create_checkpoint(context, path):
 
     checkpoint_id = str(int(time.time() * 1000000))
     checkpoint_path = _checkpoint_path(path, checkpoint_id)
-    yield SAVERS[(type, format)](context, content, checkpoint_path)
+    yield SAVERS[(type, format)](context, None, content, checkpoint_path)
     # This is a new object, so shouldn't be any eventual consistency issues
     checkpoint = yield GETTERS[(type, format)](context, checkpoint_path, False)
     return {
