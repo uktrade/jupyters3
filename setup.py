@@ -5,7 +5,7 @@ with open('README.md', 'r') as fh:
 
 setuptools.setup(
     name='jupyters3',
-    version='0.0.15',
+    version='0.0.16',
     author='Department for International Trade - WebOps',
     author_email='webops@digital.trade.gov.uk',
     description='Jupyter Notebook Contents Manager for AWS S3',
