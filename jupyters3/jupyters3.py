@@ -667,7 +667,6 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
         **auth_headers,
     }
 
-    url = f'https://{context.s3_host}{path}'
     querystring = '&'.join([
         urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(value, safe='~')
         for key, value in query.items()
