@@ -15,21 +15,42 @@ pip install jupyters3
 To configure Jupyter Notebook to use JupterS3, you can add the following to your notebook config file.
 
 ```python
-from jupters3 import JupyterS3
+from jupters3 import JupyterS3, JupyterS3SecretAccessKeyAuthentication
 c = get_config()
 c.NotebookApp.contents_manager_class = JupyterS3
 ```
 
-You _must_ also set the following settings on `c.JupyterS3` in your config file. None of them are optional.
+and _must_ also set the following settings on `c.JupyterS3` in your config file.
 
 | Setting | Description | Example |
 | --- | --- | --- |
+| `aws_region` | The AWS region in which the bucket is located | `'eu-west-1'` |
 | `aws_s3_bucket` | The name of the S3 bucket. | `'my-example-bucket'` |
 | `aws_s3_host`  | The hostname of the AWS S3 bucket. Typically, this is of the form `<aws_s3_bucket>.s3.<aws_region>.amazonaws.com`. | `'my-example-bucket.s3.eu-west-1.amazonaws.com'` |
-| `aws_region` | The AWS region in which the bucket is located. This is used to sign the requests. | `'eu-west-1'` |
+| `prefix` | The prefix to all keys used to store notebooks and checkpoints. This can be the empty string `''`. If non-empty, typically this would end in a forward slash `/`. | `'some-prefix/`' |
+
+You must also, either, authenticate using a secret key, in which case you must have the following configuration
+
+```python
+from jupters3 import JupyterS3SecretAccessKeyAuthentication
+c.JupyterS3.authentication_class = JupyterS3SecretAccessKeyAuthentication
+```
+
+_and_ the following settings on `c.JupyterS3SecretAccessKeyAuthentication`
+
+| Setting | Description | Example |
+| --- | --- | --- |
 | `aws_access_key_id` | The ID of the AWS access key used to sign the requests to the AWS S3 API. | _ommitted_ |
 | `aws_secret_access_key` | The secret part of the AWS access key used to sign the requests to the AWS S3 API. | _ommitted_ |
-| `prefix` | The prefix to all keys used to store notebooks and checkpoints. This can be the empty string `''`. If non-empty, typically this would end in a forward slash `/`. | `'some-prefix/`' |
+
+_or_ authenticate using a role in an ECS container, in which case you must have the following configuration
+
+```python
+from jupters3 import JupyterS3ECSRoleAuthentication
+c.JupyterS3.authentication_class = JupyterS3ECSRoleAuthentication
+```
+
+where JupyterS3ECSRoleAuthentication does not have configurable options.
 
 
 ## Differences from S3Contents
@@ -50,4 +71,4 @@ You _must_ also set the following settings on `c.JupyterS3` in your config file.
 
 - All objects stored in S3 are encrypted with `AES256` encryption. This is not configurable: it is not possible to turn this off or to encrypt using a specific KMS key.
 
-- AWS roles are not supported, although this may change.
+- Authentication from EC2 instances using roles is not supported, but authentication using roles from ECS containers _is_ supported.

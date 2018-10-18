@@ -1,3 +1,4 @@
+
 import asyncio
 import base64
 from collections import namedtuple
@@ -7,6 +8,7 @@ import hmac
 import itertools
 import json
 import mimetypes
+import os
 import threading
 import re
 import time
@@ -22,9 +24,12 @@ from tornado.httpclient import (
 from tornado.ioloop import IOLoop
 from tornado.locks import Lock
 from tornado.web import HTTPError as HTTPServerError
+from traitlets.config.configurable import Configurable
 from traitlets import (
+    Dict,
     Unicode,
     Instance,
+    TraitType,
     Type,
     default,
 )
@@ -45,11 +50,11 @@ AWS_S3_PUT_HEADERS = {
 }
 
 Context = namedtuple('Context', [
-    'logger', 'prefix', 's3_bucket', 's3_host', 's3_auth',
+    'logger', 'prefix', 'region', 's3_bucket', 's3_host', 's3_auth',
     'multipart_uploads',
 ])
-AwsAuth = namedtuple('AwsAuth', [
-    'host', 'region', 'access_key_id', 'secret_access_key',
+AwsCreds = namedtuple('AwsCreds', [
+    'access_key_id', 'secret_access_key', 'security_tokens',
 ])
 
 
@@ -82,14 +87,73 @@ class ExpiringDict:
         del self._store[key]
 
 
+class Datetime(TraitType):
+    klass = datetime.datetime
+    default_value = datetime.datetime(1900, 1, 1)
+
+
+class JupyterS3Authentication(Configurable):
+
+    def get_credentials(self):
+        raise NotImplementedError()
+
+
+class JupyterS3SecretAccessKeyAuthentication(JupyterS3Authentication):
+
+    aws_access_key_id = Unicode(config=True)
+    aws_secret_access_key = Unicode(config=True)
+    security_tokens = Dict()
+
+    @gen.coroutine
+    def get_credentials(self):
+        return AwsCreds(
+            access_key_id=self.aws_access_key_id,
+            secret_access_key=self.aws_secret_access_key,
+            security_tokens=self.security_tokens,
+        )
+
+
+class JupyterS3ECSRoleAuthentication(JupyterS3Authentication):
+
+    aws_access_key_id = Unicode()
+    aws_secret_access_key = Unicode()
+    security_tokens = Dict()
+    expiration = Datetime()
+
+    @gen.coroutine
+    def get_credentials(self):
+        now = datetime.datetime.now()
+
+        if now > self.expiration:
+            request = HTTPRequest('http://169.254.170.2/' + os.environ['AWS_CONTAINER_CREDENTIALS_RELATIVE_URI'], method='GET')
+            creds = json.loads((yield AsyncHTTPClient().fetch(request)).body.decode('utf-8'))
+            self.aws_access_key_id = creds['AccessKeyId']
+            self.aws_secret_access_key = creds['SecretAccessKey']
+            self.security_tokens = {
+                'x-amz-security-token': creds['Token'],
+            }
+            self.expiration = datetime.datetime.strptime(creds['Expiration'], '%Y-%m-%dT%H:%M:%SZ')
+
+        return AwsCreds(
+            access_key_id=self.aws_access_key_id,
+            secret_access_key=self.aws_secret_access_key,
+            security_tokens=self.security_tokens,
+        )
+
+
 class JupyterS3(ContentsManager):
 
     aws_s3_bucket = Unicode(config=True)
     aws_s3_host = Unicode(config=True)
     aws_region = Unicode(config=True)
-    aws_access_key_id = Unicode(config=True)
-    aws_secret_access_key = Unicode(config=True)
     prefix = Unicode(config=True)
+
+    authentication_class = Type(JupyterS3Authentication, config=True)
+    authentication = Instance(JupyterS3Authentication)
+
+    @default('authentication')
+    def _default_authentication(self):
+        return self.authentication_class(parent=self)
 
     # Do not use a checkpoints class: the rest of the system
     # only expects a ContentsManager
@@ -191,14 +255,10 @@ class JupyterS3(ContentsManager):
     def _context(self):
         return Context(
             logger=self.log,
+            region=self.aws_region,
             s3_bucket=self.aws_s3_bucket,
             s3_host=self.aws_s3_host,
-            s3_auth=AwsAuth(
-                host=self.aws_s3_host,
-                region=self.aws_region,
-                access_key_id=self.aws_access_key_id,
-                secret_access_key=self.aws_secret_access_key,
-            ),
+            s3_auth=self.authentication.get_credentials,
             prefix=self.prefix,
             multipart_uploads=self.multipart_uploads,
         )
@@ -739,12 +799,11 @@ def _list_keys(context, key_prefix, delimeter):
 @gen.coroutine
 def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     service = 's3'
-    auth_headers = _aws_auth_headers(service, context.s3_auth, method, path, query, non_auth_headers, payload)
-    headers = {
-        **non_auth_headers,
-        **auth_headers,
-    }
-
+    credentials = yield context.s3_auth()
+    headers = _aws_headers(
+        service, credentials, context.region, context.s3_host,
+        method, path, query, non_auth_headers, payload,
+    )
     querystring = '&'.join([
         urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(value, safe='~')
         for key, value in query.items()
@@ -753,16 +812,28 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
 
     request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
-    return (yield AsyncHTTPClient().fetch(request))
+
+    try:
+        response = (yield AsyncHTTPClient().fetch(request))
+    except HTTPClientError as exception:
+        if exception.response.code != 404:
+            context.logger.warning(exception.response.body)
+        raise
+
+    return response
 
 
-def _aws_auth_headers(service, auth, method, path, query, headers, payload):
+def _aws_headers(service, creds, region, host, method, path, query, non_auth_headers, payload):
     algorithm = 'AWS4-HMAC-SHA256'
 
     now = datetime.datetime.utcnow()
     amzdate = now.strftime('%Y%m%dT%H%M%SZ')
     datestamp = now.strftime('%Y%m%d')
-    credential_scope = f'{datestamp}/{auth.region}/{service}/aws4_request'
+    credential_scope = f'{datestamp}/{region}/{service}/aws4_request'
+    headers = {
+        **non_auth_headers,
+        **creds.security_tokens,
+    }
     headers_lower = {
         header_key.lower().strip(): header_value.strip()
         for header_key, header_value in headers.items()
@@ -776,7 +847,7 @@ def _aws_auth_headers(service, auth, method, path, query, headers, payload):
         def canonical_request():
             header_values = {
                 **headers_lower,
-                'host': auth.host,
+                'host': host,
                 'x-amz-date': amzdate,
             }
 
@@ -801,17 +872,19 @@ def _aws_auth_headers(service, auth, method, path, query, headers, payload):
             f'{algorithm}\n{amzdate}\n{credential_scope}\n' + \
             hashlib.sha256(canonical_request().encode('utf-8')).hexdigest()
 
-        date_key = sign(('AWS4' + auth.secret_access_key).encode('utf-8'), datestamp)
-        region_key = sign(date_key, auth.region)
+        date_key = sign(('AWS4' + creds.secret_access_key).encode('utf-8'), datestamp)
+        region_key = sign(date_key, region)
         service_key = sign(region_key, service)
         request_key = sign(service_key, 'aws4_request')
         return sign(request_key, string_to_sign).hex()
 
     return {
+        **non_auth_headers,
+        **creds.security_tokens,
         'x-amz-date': amzdate,
         'x-amz-content-sha256': payload_hash,
         'Authorization': (
-            f'{algorithm} Credential={auth.access_key_id}/{credential_scope}, ' +
+            f'{algorithm} Credential={creds.access_key_id}/{credential_scope}, ' +
             f'SignedHeaders={signed_headers}, Signature=' + signature()
         ),
     }
