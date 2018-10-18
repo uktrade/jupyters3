@@ -409,7 +409,6 @@ def _save_any(context, chunk, content_bytes, path, type, mimetype):
 
 @gen.coroutine
 def _save_chunk(context, chunk, content_bytes, path, type, mimetype):
-    print('MULTIPART', context.multipart_uploads)
     # Chunks are 1-indexed
     if chunk == 1:
         context.multipart_uploads[path] = []
