@@ -1,1 +1,3 @@
-from .jupyters3 import JupyterS3, JupyterS3ECSRoleAuthentication
+from .jupyters3 import JupyterS3
+from .jupyters3 import JupyterS3SecretAccessKeyAuthentication
+from .jupyters3 import JupyterS3ECSRoleAuthentication
