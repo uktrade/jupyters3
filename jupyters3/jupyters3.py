@@ -54,7 +54,7 @@ Context = namedtuple('Context', [
     'multipart_uploads',
 ])
 AwsCreds = namedtuple('AwsCreds', [
-    'access_key_id', 'secret_access_key', 'security_tokens',
+    'access_key_id', 'secret_access_key', 'pre_auth_headers',
 ])
 
 
@@ -102,14 +102,14 @@ class JupyterS3SecretAccessKeyAuthentication(JupyterS3Authentication):
 
     aws_access_key_id = Unicode(config=True)
     aws_secret_access_key = Unicode(config=True)
-    security_tokens = Dict()
+    pre_auth_headers = Dict()
 
     @gen.coroutine
     def get_credentials(self):
         return AwsCreds(
             access_key_id=self.aws_access_key_id,
             secret_access_key=self.aws_secret_access_key,
-            security_tokens=self.security_tokens,
+            pre_auth_headers=self.pre_auth_headers,
         )
 
 
@@ -117,7 +117,7 @@ class JupyterS3ECSRoleAuthentication(JupyterS3Authentication):
 
     aws_access_key_id = Unicode()
     aws_secret_access_key = Unicode()
-    security_tokens = Dict()
+    pre_auth_headers = Dict()
     expiration = Datetime()
 
     @gen.coroutine
@@ -129,7 +129,7 @@ class JupyterS3ECSRoleAuthentication(JupyterS3Authentication):
             creds = json.loads((yield AsyncHTTPClient().fetch(request)).body.decode('utf-8'))
             self.aws_access_key_id = creds['AccessKeyId']
             self.aws_secret_access_key = creds['SecretAccessKey']
-            self.security_tokens = {
+            self.pre_auth_headers = {
                 'x-amz-security-token': creds['Token'],
             }
             self.expiration = datetime.datetime.strptime(creds['Expiration'], '%Y-%m-%dT%H:%M:%SZ')
@@ -137,7 +137,7 @@ class JupyterS3ECSRoleAuthentication(JupyterS3Authentication):
         return AwsCreds(
             access_key_id=self.aws_access_key_id,
             secret_access_key=self.aws_secret_access_key,
-            security_tokens=self.security_tokens,
+            pre_auth_headers=self.pre_auth_headers,
         )
 
 
@@ -797,17 +797,18 @@ def _list_keys(context, key_prefix, delimeter):
 
 
 @gen.coroutine
-def _make_s3_request(context, method, path, query, non_auth_headers, payload):
+def _make_s3_request(context, method, path, query, api_pre_auth_headers, payload):
     service = 's3'
     credentials = yield context.s3_auth()
+    pre_auth_headers = {
+        **api_pre_auth_headers,
+        **credentials.pre_auth_headers,
+    }
     headers = _aws_headers(
-        service, credentials, context.region, context.s3_host,
-        method, path, query, non_auth_headers, payload,
+        service, credentials.access_key_id, credentials.secret_access_key,
+        context.region, context.s3_host, method, path, query, pre_auth_headers, payload,
     )
-    querystring = '&'.join([
-        urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(value, safe='~')
-        for key, value in query.items()
-    ])
+    querystring = urllib.parse.urlencode(query, safe='~', quote_via=urllib.parse.quote)
     encoded_path = urllib.parse.quote(path, safe='/~')
     url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
 
@@ -823,20 +824,17 @@ def _make_s3_request(context, method, path, query, non_auth_headers, payload):
     return response
 
 
-def _aws_headers(service, creds, region, host, method, path, query, non_auth_headers, payload):
+def _aws_headers(service, access_key_id, secret_access_key,
+                 region, host, method, path, query, pre_auth_headers, payload):
     algorithm = 'AWS4-HMAC-SHA256'
 
     now = datetime.datetime.utcnow()
     amzdate = now.strftime('%Y%m%dT%H%M%SZ')
     datestamp = now.strftime('%Y%m%d')
     credential_scope = f'{datestamp}/{region}/{service}/aws4_request'
-    headers = {
-        **non_auth_headers,
-        **creds.security_tokens,
-    }
     headers_lower = {
         header_key.lower().strip(): header_value.strip()
-        for header_key, header_value in headers.items()
+        for header_key, header_value in pre_auth_headers.items()
     }
     signed_header_keys = sorted([header_key
                                  for header_key in headers_lower.keys()] + ['host', 'x-amz-date'])
@@ -872,19 +870,18 @@ def _aws_headers(service, creds, region, host, method, path, query, non_auth_hea
             f'{algorithm}\n{amzdate}\n{credential_scope}\n' + \
             hashlib.sha256(canonical_request().encode('utf-8')).hexdigest()
 
-        date_key = sign(('AWS4' + creds.secret_access_key).encode('utf-8'), datestamp)
+        date_key = sign(('AWS4' + secret_access_key).encode('utf-8'), datestamp)
         region_key = sign(date_key, region)
         service_key = sign(region_key, service)
         request_key = sign(service_key, 'aws4_request')
         return sign(request_key, string_to_sign).hex()
 
     return {
-        **non_auth_headers,
-        **creds.security_tokens,
+        **pre_auth_headers,
         'x-amz-date': amzdate,
         'x-amz-content-sha256': payload_hash,
         'Authorization': (
-            f'{algorithm} Credential={creds.access_key_id}/{credential_scope}, ' +
+            f'{algorithm} Credential={access_key_id}/{credential_scope}, ' +
             f'SignedHeaders={signed_headers}, Signature=' + signature()
         ),
     }
