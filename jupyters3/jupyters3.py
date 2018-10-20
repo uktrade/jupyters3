@@ -839,7 +839,7 @@ def _aws_headers(service, access_key_id, secret_access_key,
     required_headers = ['host', 'x-amz-content-sha256', 'x-amz-date']
     signed_header_keys = sorted([header_key
                                  for header_key in headers_lower.keys()] + required_headers)
-    signed_headers = ';'.join([header_key for header_key in signed_header_keys])
+    signed_headers = ';'.join(signed_header_keys)
     payload_hash = hashlib.sha256(payload).hexdigest()
 
     def signature():
