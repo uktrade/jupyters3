@@ -836,8 +836,9 @@ def _aws_headers(service, access_key_id, secret_access_key,
         header_key.lower().strip(): header_value.strip()
         for header_key, header_value in pre_auth_headers.items()
     }
+    required_headers = ['host', 'x-amz-content-sha256', 'x-amz-date']
     signed_header_keys = sorted([header_key
-                                 for header_key in headers_lower.keys()] + ['host', 'x-amz-date'])
+                                 for header_key in headers_lower.keys()] + required_headers)
     signed_headers = ';'.join([header_key for header_key in signed_header_keys])
     payload_hash = hashlib.sha256(payload).hexdigest()
 
@@ -846,6 +847,7 @@ def _aws_headers(service, access_key_id, secret_access_key,
             header_values = {
                 **headers_lower,
                 'host': host,
+                'x-amz-content-sha256': payload_hash,
                 'x-amz-date': amzdate,
             }
 
