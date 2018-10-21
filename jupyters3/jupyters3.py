@@ -804,10 +804,11 @@ def _make_s3_request(context, method, path, query, api_pre_auth_headers, payload
         **api_pre_auth_headers,
         **credentials.pre_auth_headers,
     }
-    headers = _aws_headers(
-        service, credentials.access_key_id, credentials.secret_access_key,
-        context.region, context.s3_host, method, path, query, pre_auth_headers, payload,
+    headers = _aws_sig_v4_headers(
+        credentials.access_key_id, credentials.secret_access_key, pre_auth_headers,
+        service, context.region, context.s3_host, method, path, query, payload,
     )
+
     querystring = urllib.parse.urlencode(query, safe='~', quote_via=urllib.parse.quote)
     encoded_path = urllib.parse.quote(path, safe='/~')
     url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
@@ -824,43 +825,38 @@ def _make_s3_request(context, method, path, query, api_pre_auth_headers, payload
     return response
 
 
-def _aws_headers(service, access_key_id, secret_access_key,
-                 region, host, method, path, query, pre_auth_headers, payload):
+def _aws_sig_v4_headers(access_key_id, secret_access_key, pre_auth_headers,
+                        service, region, host, method, path, query, payload):
     algorithm = 'AWS4-HMAC-SHA256'
 
     now = datetime.datetime.utcnow()
     amzdate = now.strftime('%Y%m%dT%H%M%SZ')
     datestamp = now.strftime('%Y%m%d')
+    payload_hash = hashlib.sha256(payload).hexdigest()
     credential_scope = f'{datestamp}/{region}/{service}/aws4_request'
-    headers_lower = {
+
+    pre_auth_headers_lower = {
         header_key.lower().strip(): header_value.strip()
         for header_key, header_value in pre_auth_headers.items()
     }
-    required_headers = ['host', 'x-amz-content-sha256', 'x-amz-date']
-    signed_header_keys = sorted([header_key
-                                 for header_key in headers_lower.keys()] + required_headers)
-    signed_headers = ';'.join(signed_header_keys)
-    payload_hash = hashlib.sha256(payload).hexdigest()
+    required_headers = {
+        'host': host,
+        'x-amz-content-sha256': payload_hash,
+        'x-amz-date': amzdate,
+    }
+    headers = {**pre_auth_headers_lower, **required_headers}
+    header_keys = sorted(headers.keys())
+    signed_headers = ';'.join(header_keys)
 
     def signature():
         def canonical_request():
-            header_values = {
-                **headers_lower,
-                'host': host,
-                'x-amz-content-sha256': payload_hash,
-                'x-amz-date': amzdate,
-            }
-
             canonical_uri = urllib.parse.quote(path, safe='/~')
-            query_keys = sorted(query.keys())
-            canonical_querystring = '&'.join([
-                urllib.parse.quote(key, safe='~') + '=' + urllib.parse.quote(query[key], safe='~')
-                for key in query_keys
-            ])
-            canonical_headers = ''.join([
-                header_key + ':' + header_values[header_key] + '\n'
-                for header_key in signed_header_keys
-            ])
+            quoted_query = sorted(
+                (urllib.parse.quote(key, safe='~'), urllib.parse.quote(value, safe='~'))
+                for key, value in query.items()
+            )
+            canonical_querystring = '&'.join(f'{key}={value}' for key, value in quoted_query)
+            canonical_headers = ''.join(f'{key}:{headers[key]}\n' for key in header_keys)
 
             return f'{method}\n{canonical_uri}\n{canonical_querystring}\n' + \
                    f'{canonical_headers}\n{signed_headers}\n{payload_hash}'
@@ -868,9 +864,8 @@ def _aws_headers(service, access_key_id, secret_access_key,
         def sign(key, msg):
             return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
 
-        string_to_sign = \
-            f'{algorithm}\n{amzdate}\n{credential_scope}\n' + \
-            hashlib.sha256(canonical_request().encode('utf-8')).hexdigest()
+        string_to_sign = f'{algorithm}\n{amzdate}\n{credential_scope}\n' + \
+                         hashlib.sha256(canonical_request().encode('utf-8')).hexdigest()
 
         date_key = sign(('AWS4' + secret_access_key).encode('utf-8'), datestamp)
         region_key = sign(date_key, region)
@@ -882,10 +877,8 @@ def _aws_headers(service, access_key_id, secret_access_key,
         **pre_auth_headers,
         'x-amz-date': amzdate,
         'x-amz-content-sha256': payload_hash,
-        'Authorization': (
-            f'{algorithm} Credential={access_key_id}/{credential_scope}, ' +
-            f'SignedHeaders={signed_headers}, Signature=' + signature()
-        ),
+        'Authorization': f'{algorithm} Credential={access_key_id}/{credential_scope}, '
+                         f'SignedHeaders={signed_headers}, Signature=' + signature(),
     }
 
 
