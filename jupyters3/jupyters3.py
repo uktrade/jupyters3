@@ -836,7 +836,7 @@ def _aws_sig_v4_headers(access_key_id, secret_access_key, pre_auth_headers,
     credential_scope = f'{datestamp}/{region}/{service}/aws4_request'
 
     pre_auth_headers_lower = {
-        header_key.lower().strip(): header_value.strip()
+        header_key.lower(): ' '.join(header_value.split())
         for header_key, header_value in pre_auth_headers.items()
     }
     required_headers = {
