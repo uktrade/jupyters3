@@ -800,13 +800,14 @@ def _make_s3_request(context, method, path, query, api_pre_auth_headers, payload
         **api_pre_auth_headers,
         **credentials.pre_auth_headers,
     }
+    full_path = f'/{context.s3_bucket}{path}'
     headers = _aws_sig_v4_headers(
         credentials.access_key_id, credentials.secret_access_key, pre_auth_headers,
-        service, context.region, context.s3_host, method, path, query, payload,
+        service, context.region, context.s3_host, method, full_path, query, payload,
     )
 
     querystring = urllib.parse.urlencode(query, safe='~', quote_via=urllib.parse.quote)
-    encoded_path = urllib.parse.quote(path, safe='/~')
+    encoded_path = urllib.parse.quote(full_path, safe='/~')
     url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
 
     request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)

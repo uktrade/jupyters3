@@ -26,7 +26,7 @@ and _must_ also set the following settings on `c.JupyterS3` in your config file.
 | --- | --- | --- |
 | `aws_region` | The AWS region in which the bucket is located | `'eu-west-1'` |
 | `aws_s3_bucket` | The name of the S3 bucket. | `'my-example-bucket'` |
-| `aws_s3_host`  | The hostname of the AWS S3 bucket. Typically, this is of the form `<aws_s3_bucket>.s3.<aws_region>.amazonaws.com`. | `'my-example-bucket.s3.eu-west-1.amazonaws.com'` |
+| `aws_s3_host`  | The hostname of the AWS S3 API. Typically, this is of the form `s3-<aws_region>.amazonaws.com`. | `'s3-eu-west-1.amazonaws.com'` |
 | `prefix` | The prefix to all keys used to store notebooks and checkpoints. This can be the empty string `''`. If non-empty, typically this would end in a forward slash `/`. | `'some-prefix/`' |
 
 You must also, either, authenticate using a secret key, in which case you must have the following configuration
@@ -66,7 +66,5 @@ where JupyterS3ECSRoleAuthentication does not have configurable options.
 - Uploading arbitrary files, such as JPEGs, and viewing them in Jupyter or downloading them, works.
 
 - Copying and renaming files don't download or re-upload object data from or to S3. "PUT Object - Copy" is used instead.
-
-- Requests to S3 are host-style, using a custom domain for the bucket, rather than path-style.
 
 - Authentication from EC2 instances using roles is not supported, but authentication using roles from ECS containers _is_ supported.
