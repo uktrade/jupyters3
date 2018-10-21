@@ -69,6 +69,4 @@ where JupyterS3ECSRoleAuthentication does not have configurable options.
 
 - Requests to S3 are host-style, using a custom domain for the bucket, rather than path-style.
 
-- All objects stored in S3 are encrypted with `AES256` encryption. This is not configurable: it is not possible to turn this off or to encrypt using a specific KMS key.
-
 - Authentication from EC2 instances using roles is not supported, but authentication using roles from ECS containers _is_ supported.

@@ -45,9 +45,6 @@ CHECKPOINT_SUFFIX = '.checkpoints'
 UNTITLED_NOTEBOOK = 'Untitled'
 UNTITLED_FILE = 'Untitled'
 UNTITLED_DIRECTORY  = 'Untitled Folder'
-AWS_S3_PUT_HEADERS = {
-    'x-amz-server-side-encryption': 'AES256',
-}
 
 Context = namedtuple('Context', [
     'logger', 'prefix', 'region', 's3_bucket', 's3_host', 's3_auth',
@@ -486,7 +483,7 @@ def _save_chunk(context, chunk, content_bytes, path, type, mimetype):
 @gen.coroutine
 def _save_bytes(context, content_bytes, path, type, mimetype):
     key = _key(context, path)
-    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, AWS_S3_PUT_HEADERS, content_bytes)
+    response = yield _make_s3_request(context, 'PUT', '/' + key, {}, {}, content_bytes)
 
     last_modified_str = response.headers['Date']
     last_modified = datetime.datetime.strptime(last_modified_str, "%a, %d %b %Y %H:%M:%S GMT")
@@ -617,7 +614,6 @@ def _copy_key(context, old_key, new_key):
     source_bucket = context.s3_bucket
     copy_headers = {
         'x-amz-copy-source': f'/{source_bucket}/{old_key}',
-        **AWS_S3_PUT_HEADERS,
     }
     yield _make_s3_request(context, 'PUT', '/' + new_key, {}, copy_headers, b'')
 
