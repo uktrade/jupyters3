@@ -810,7 +810,10 @@ def _make_s3_request(context, method, path, query, api_pre_auth_headers, payload
     encoded_path = urllib.parse.quote(full_path, safe='/~')
     url = f'https://{context.s3_host}{encoded_path}' + (('?' + querystring) if querystring else '')
 
-    request = HTTPRequest(url, allow_nonstandard_methods=True, method=method, headers=headers, body=payload)
+    body = \
+        payload if method == 'PUT' else \
+        None
+    request = HTTPRequest(url, method=method, headers=headers, body=body)
 
     try:
         response = (yield AsyncHTTPClient().fetch(request))
