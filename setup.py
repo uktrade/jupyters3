@@ -13,6 +13,9 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     url='https://github.com/uktrade/jupyters3',
     packages=setuptools.find_packages(),
+    install_requires=[
+        'notebook>=5.7.0',
+    ],
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
