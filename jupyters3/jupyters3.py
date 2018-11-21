@@ -39,7 +39,7 @@ from notebook.services.contents.manager import (
     ContentsManager,
 )
 
-DIRECTORY_SUFFIX = '.s3keep'
+DIRECTORY_SUFFIX = '/'
 NOTEBOOK_SUFFIX = '.ipynb'
 CHECKPOINT_SUFFIX = '.checkpoints'
 UNTITLED_NOTEBOOK = 'Untitled'
@@ -278,7 +278,7 @@ def _final_path_component(key_or_path):
 # The sort keys keep the UI as reasonable as possible with long running
 # actions acting on multiple objects, including if things fail in the middle
 def _copy_sort_key(key):
-    return (key.count('/'), 0 if key.endswith('/' + DIRECTORY_SUFFIX) else 1)
+    return (key.count('/'), 0 if key.endswith(DIRECTORY_SUFFIX) else 1)
 
 
 def _delete_sort_key(key):
@@ -314,7 +314,7 @@ def _type_from_path_not_directory(path):
 
 @gen.coroutine
 def _dir_exists(context, path):
-    return True if path == '/' else (yield _file_exists(context, path + '/' + DIRECTORY_SUFFIX))
+    return True if path == '/' else (yield _file_exists(context, path + DIRECTORY_SUFFIX))
 
 
 @gen.coroutine
@@ -418,7 +418,7 @@ def _get_directory(context, path, content):
                 'last_modified': last_modified,
             }
             for (key, last_modified) in keys
-            if not key.endswith('/' + DIRECTORY_SUFFIX)
+            if not key.endswith(DIRECTORY_SUFFIX)
         ]) if content else None
     }
 
@@ -452,7 +452,7 @@ def _save_file_text(context, chunk, content, path):
 
 @gen.coroutine
 def _save_directory(context, chunk, content, path):
-    return (yield _save_any(context, chunk, b'', path + '/' + DIRECTORY_SUFFIX, 'directory', None))
+    return (yield _save_any(context, chunk, b'', path + DIRECTORY_SUFFIX, 'directory', None))
 
 
 @gen.coroutine
