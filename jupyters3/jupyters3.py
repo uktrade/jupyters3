@@ -192,7 +192,7 @@ class JupyterS3(ContentsManager):
 
         return _run_sync_in_new_thread(file_exists_async)
 
-    def get(self, path, content, type, format=None):
+    def get(self, path, content=True, type='notebook', format=None):
 
         @gen.coroutine
         def get_async():
