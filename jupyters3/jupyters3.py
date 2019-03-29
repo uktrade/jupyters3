@@ -785,7 +785,7 @@ def _list_keys(context, key_prefix, delimeter):
 
     token, keys, directories = yield _list_first_page()
     while token:
-        token, keys_page, directories_page = yield _list_later_page(context.aws_endpoint, token)
+        token, keys_page, directories_page = yield _list_later_page(token)
         keys.extend(keys_page)
         directories.extend(directories_page)
 
