@@ -34,6 +34,7 @@ from traitlets import (
     default,
 )
 
+import nbformat
 from nbformat.v4 import new_notebook
 from notebook.services.contents.manager import (
     ContentsManager,
@@ -349,7 +350,8 @@ def _get(context, path, content, type, format):
 
 @gen.coroutine
 def _get_notebook(context, path, content):
-    return (yield _get_any(context, path, content, 'notebook', None, 'json', lambda file_bytes: json.loads(file_bytes.decode('utf-8'))))
+    notebook_dict = yield _get_any(context, path, content, 'notebook', None, 'json', lambda file_bytes: json.loads(file_bytes.decode('utf-8')))
+    return nbformat.from_dict(notebook_dict)
 
 
 @gen.coroutine
