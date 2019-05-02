@@ -292,7 +292,7 @@ def _delete_sort_key(key):
 def _type_from_path(context, path):
     type = \
         'notebook' if path.endswith(NOTEBOOK_SUFFIX) else \
-        'directory' if path == '/' or (yield _dir_exists(context, path)) else \
+        'directory' if _is_root(path) or (yield _dir_exists(context, path)) else \
         'file'
     return type
 
@@ -315,7 +315,13 @@ def _type_from_path_not_directory(path):
 
 @gen.coroutine
 def _dir_exists(context, path):
-    return True if path == '/' else (yield _file_exists(context, path + DIRECTORY_SUFFIX))
+    return True if _is_root(path) else (yield _file_exists(context, path + DIRECTORY_SUFFIX))
+
+
+def _is_root(path):
+    is_notebook_root = path == ''
+    is_lab_root = path == '/'
+    return is_notebook_root or is_lab_root
 
 
 @gen.coroutine
