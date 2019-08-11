@@ -12,10 +12,10 @@ pip install jupyters3
 
 ## Configuration
 
-To configure Jupyter Notebook to use JupterS3, you can add the following to your notebook config file.
+To configure Jupyter Notebook to use JupyterS3, you can add the following to your notebook config file.
 
 ```python
-from jupters3 import JupyterS3, JupyterS3SecretAccessKeyAuthentication
+from jupyters3 import JupyterS3, JupyterS3SecretAccessKeyAuthentication
 c = get_config()
 c.NotebookApp.contents_manager_class = JupyterS3
 ```
@@ -32,7 +32,7 @@ and _must_ also set the following settings on `c.JupyterS3` in your config file.
 You must also, either, authenticate using a secret key, in which case you must have the following configuration
 
 ```python
-from jupters3 import JupyterS3SecretAccessKeyAuthentication
+from jupyters3 import JupyterS3SecretAccessKeyAuthentication
 c.JupyterS3.authentication_class = JupyterS3SecretAccessKeyAuthentication
 ```
 
@@ -46,7 +46,7 @@ _and_ the following settings on `c.JupyterS3SecretAccessKeyAuthentication`
 _or_ authenticate using a role in an ECS container, in which case you must have the following configuration
 
 ```python
-from jupters3 import JupyterS3ECSRoleAuthentication
+from jupyters3 import JupyterS3ECSRoleAuthentication
 c.JupyterS3.authentication_class = JupyterS3ECSRoleAuthentication
 ```
 
