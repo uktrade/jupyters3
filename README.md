@@ -71,7 +71,3 @@ where JupyterS3ECSRoleAuthentication does not have configurable options.
 
 - Folders are created using a 0 byte object with key suffix `/` (forward slash). A single forward slash suffix is consistent with both the AWS Console and AWS AppStream.
 
-
-## Required Jupyter Notebook version
-
-From JupyterS3 0.0.37, Jupyter Notebook 6.0.0 or greater is required. If you're using an earlier version of Jupyter Notebook, you'll have to pin to JupyterS3 0.0.36 or earlier.
