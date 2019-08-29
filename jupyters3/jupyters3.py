@@ -9,6 +9,7 @@ import itertools
 import json
 import mimetypes
 import os
+import threading
 import re
 import time
 import urllib
@@ -173,17 +174,32 @@ class JupyterS3(ContentsManager):
     def is_hidden(self, path):
         return False
 
-    @gen.coroutine
+    # The next functions are not expected to be coroutines
+    # or return futures. They have to block the event loop.
+
     def dir_exists(self, path):
-        return (yield _dir_exists(self._context(), path))
 
-    @gen.coroutine
+        @gen.coroutine
+        def dir_exists_async():
+            return (yield _dir_exists(self._context(), path))
+
+        return _run_sync_in_new_thread(dir_exists_async)
+
     def file_exists(self, path):
-        return (yield _file_exists(self._context(), path))
 
-    @gen.coroutine
+        @gen.coroutine
+        def file_exists_async():
+            return (yield _file_exists(self._context(), path))
+
+        return _run_sync_in_new_thread(file_exists_async)
+
     def get(self, path, content=True, type=None, format=None):
-        return (yield _get(self._context(), path, content, type, format))
+
+        @gen.coroutine
+        def get_async():
+            return (yield _get(self._context(), path, content, type, format))
+
+        return _run_sync_in_new_thread(get_async)
 
     @gen.coroutine
     def save(self, model, path):
@@ -872,6 +888,28 @@ def _aws_sig_v4_headers(access_key_id, secret_access_key, pre_auth_headers,
         'Authorization': f'{algorithm} Credential={access_key_id}/{credential_scope}, '
                          f'SignedHeaders={signed_headers}, Signature=' + signature(),
     }
+
+
+def _run_sync_in_new_thread(func):
+    result = None
+    exception = None
+    def _func():
+        nonlocal result
+        nonlocal exception
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        try:
+            result = IOLoop.current().run_sync(func)
+        except BaseException as _exception:
+            exception = _exception
+
+    thread = threading.Thread(target=_func)
+    thread.start()
+    thread.join()
+
+    if exception is not None:
+        raise exception
+    else:
+        return result
 
 
 GETTERS = {
