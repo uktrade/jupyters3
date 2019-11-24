@@ -1,4 +1,3 @@
-
 import asyncio
 import base64
 from collections import namedtuple
@@ -339,7 +338,7 @@ def _file_exists(context, path):
 
         return response.code == 200
 
-    return False if path == '/' else (yield key_exists())
+    return False if _is_root(path) else (yield key_exists())
 
 
 @gen.coroutine
