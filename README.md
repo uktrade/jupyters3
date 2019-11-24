@@ -115,7 +115,4 @@ c.JupyterS3EC2RoleAuthentication.role_name = 'my-iam-role-name'
 
 - Copying and renaming files don't download or re-upload object data from or to S3. "PUT Object - Copy" is used instead.
 
-- Authentication from EC2 instances using roles is not supported, but authentication using roles from ECS containers _is_ supported.
-
 - Folders are created using a 0 byte object with key suffix `/` (forward slash). A single forward slash suffix is consistent with both the AWS Console and AWS AppStream.
-
