@@ -50,7 +50,55 @@ from jupyters3 import JupyterS3ECSRoleAuthentication
 c.JupyterS3.authentication_class = JupyterS3ECSRoleAuthentication
 ```
 
-where JupyterS3ECSRoleAuthentication does not have configurable options.
+where JupyterS3ECSRoleAuthentication does not have configurable options, _or_ write your own authentication class, such as the one below for EC2/IAM role-based authentication
+
+```python
+import datetime
+import json
+
+from jupyters3 import JupyterS3Authentication
+from tornado import gen
+from tornado.httpclient import (
+    AsyncHTTPClient,
+    HTTPError as HTTPClientError,
+    HTTPRequest,
+)
+
+class JupyterS3EC2RoleAuthentication(JupyterS3Authentication):
+
+    role_name = Unicode(config=True)
+    aws_access_key_id = Unicode()
+    aws_secret_access_key = Unicode()
+    pre_auth_headers = Dict()
+    expiration = Datetime()
+
+    @gen.coroutine
+    def get_credentials(self):
+        now = datetime.datetime.now()
+
+        if now > self.expiration:
+            request = HTTPRequest('http://169.254.169.254/latest/meta-data/iam/security-credentials/' + self.role_name, method='GET')
+            creds = json.loads((yield AsyncHTTPClient().fetch(request)).body.decode('utf-8'))
+            self.aws_access_key_id = creds['AccessKeyId']
+            self.aws_secret_access_key = creds['SecretAccessKey']
+            self.pre_auth_headers = {
+                'x-amz-security-token': creds['Token'],
+            }
+            self.expiration = datetime.datetime.strptime(creds['Expiration'], '%Y-%m-%dT%H:%M:%SZ')
+
+        return AwsCreds(
+            access_key_id=self.aws_access_key_id,
+            secret_access_key=self.aws_secret_access_key,
+            pre_auth_headers=self.pre_auth_headers,
+        )
+```
+
+configured using
+
+```python
+c.JupyterS3.authentication_class = JupyterS3EC2RoleAuthentication
+c.JupyterS3EC2RoleAuthentication.role_name = 'my-iam-role-name'
+```
 
 
 ## Differences from S3Contents
