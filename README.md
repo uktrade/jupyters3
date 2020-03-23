@@ -56,7 +56,10 @@ where JupyterS3ECSRoleAuthentication does not have configurable options, _or_ wr
 import datetime
 import json
 
-from jupyters3 import JupyterS3Authentication
+from jupyters3 import (
+    AwsCreds,
+    JupyterS3Authentication,
+)
 from tornado import gen
 from tornado.httpclient import (
     AsyncHTTPClient,
